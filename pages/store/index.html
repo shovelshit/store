@@ -259,6 +259,45 @@
     }
     .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+    /* ===== 登录门禁 ===== */
+    .auth-shell {
+      position: fixed; inset: 0; z-index: 50;
+      display: grid; place-items: center;
+      background: rgba(244, 246, 251, .96);
+      padding: 20px;
+    }
+    .auth-card {
+      width: min(360px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: 0 24px 60px rgba(15, 23, 42, .12);
+      padding: 28px 24px;
+      text-align: center;
+    }
+    .auth-icon { font-size: 40px; margin-bottom: 6px; }
+    .auth-card h2 { margin: 0 0 6px; font-size: 19px; }
+    .auth-desc { margin: 0 0 18px; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+    .auth-input {
+      width: 100%; height: 42px;
+      border: 1px solid var(--line); border-radius: 11px;
+      padding: 0 12px;
+      font: inherit; font-size: 14px;
+      text-align: center;
+      background: #f8fafc;
+    }
+    .auth-input:focus { outline: 2px solid #bfdbfe; border-color: #93c5fd; background: #fff; }
+    .auth-error { min-height: 18px; margin: 8px 0 4px; font-size: 12px; color: var(--danger); }
+    .auth-btn {
+      width: 100%; height: 42px;
+      border: 0; border-radius: 11px;
+      background: var(--brand); color: #fff;
+      font: inherit; font-size: 14px; font-weight: 650;
+      cursor: pointer;
+    }
+    .auth-btn:hover { background: var(--brand-dark); }
+    .auth-btn:disabled { opacity: .6; cursor: wait; }
+
     /* ===== GitHub 发布 ===== */
     .gh { display: none; }
     .gh.open { display: block; }
@@ -359,7 +398,22 @@
   </div>
 </header>
 
-<main class="page">
+<!-- 登录门禁：会话滑动续期，一年内打开过一次就不用再登录 -->
+<section class="auth-shell" id="authShell" hidden>
+  <div class="auth-card">
+    <div class="auth-icon">📦</div>
+    <h2>登录应用下载</h2>
+    <p class="auth-desc">输入访问密钥登录。登录后长期有效，无需反复输入。</p>
+    <form id="authForm">
+      <input class="auth-input" id="authKey" type="password" autocomplete="current-password"
+             placeholder="访问密钥" required />
+      <div class="auth-error" id="authError" role="alert"></div>
+      <button class="auth-btn" id="authSubmit" type="submit">登录</button>
+    </form>
+  </div>
+</section>
+
+<main class="page" id="appPage" hidden>
   <nav class="tabs" id="tabs" aria-label="分类"></nav>
   <div class="crumb" id="crumb"></div>
   <div class="summary" id="summary"></div>
@@ -439,6 +493,7 @@
 
   const state = {
     mode: 'files',
+    booted: false,
     category: CATEGORIES[0],
     path: CATEGORIES[0].path,
     stack: [],
@@ -1060,6 +1115,61 @@
     renderSummary();
   });
 
+  // ===== 登录门禁 =====
+  // 会话由服务端滑动续期：只要一年内打开过一次就不需要重新登录
+  async function checkSession() {
+    try {
+      const response = await fetch('/store/auth/session', { cache: 'no-store' });
+      if (response.ok) { showApp(); return; }
+    } catch (error) { /* 网络异常时先展示登录门 */ }
+    showLogin();
+  }
+
+  function showApp() {
+    $('#authShell').hidden = true;
+    $('#appPage').hidden = false;
+    if (state.booted) return; // 已加载过目录时不再重复请求
+    state.booted = true;
+    renderTabs();
+    loadPath(CATEGORIES[0], CATEGORIES[0].path);
+  }
+
+  function showLogin() {
+    $('#authShell').hidden = false;
+    $('#appPage').hidden = true;
+    $('#authError').textContent = '';
+    $('#authKey').focus();
+  }
+
+  $('#authForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = $('#authSubmit');
+    const key = $('#authKey').value.trim();
+    if (!key) return;
+    button.disabled = true;
+    button.textContent = '登录中…';
+    $('#authError').textContent = '';
+    try {
+      const response = await fetch('/store/auth/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key })
+      });
+      if (response.ok) {
+        $('#authKey').value = '';
+        showApp();
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      $('#authError').textContent = data.error || `登录失败（HTTP ${response.status}）`;
+    } catch (error) {
+      $('#authError').textContent = `网络错误：${error.message}`;
+    } finally {
+      button.disabled = false;
+      button.textContent = '登录';
+    }
+  });
+
   // ===== 启动 =====
   $('#ghUser').value = state.ghUser;
   $('#ghProxyMode').value = state.ghMode;
@@ -1099,7 +1209,7 @@
   });
 
   renderTabs();
-  loadPath(CATEGORIES[0], CATEGORIES[0].path);
+  checkSession();
 </script>
 </body>
 </html>

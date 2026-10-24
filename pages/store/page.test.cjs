@@ -5,12 +5,21 @@ const path = require("node:path");
 
 const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
 
-test("页面不包含账号登录门禁", () => {
-  assert.doesNotMatch(html, /auth\.js/);
+test("页面带登录门禁，会话由服务端滑动续期", () => {
+  assert.match(html, /id="authShell"/);
+  assert.match(html, /id="authForm"/);
+  assert.match(html, /function checkSession\(\)/);
+  assert.match(html, /\/store\/auth\/session/);
+  assert.doesNotMatch(html, /auth\.js/); // 无外部登录脚本
   assert.doesNotMatch(html, /auth\.css/);
-  assert.doesNotMatch(html, /store-login-form/);
-  assert.doesNotMatch(html, /storeSession/);
-  assert.doesNotMatch(html, /store:authenticated/);
+});
+
+test("登录成功后才加载目录（不再无门禁直连）", () => {
+  assert.match(html, /function showApp\(\)/);
+  assert.match(html, /state\.booted/);
+  assert.match(html, /loadPath\(CATEGORIES\[0\], CATEGORIES\[0\]\.path\)/);
+  assert.match(html, /checkSession\(\)/);
+  assert.match(html, /\/store\/api/);
 });
 
 test("目录页使用列表布局而不是卡片网格", () => {
@@ -67,7 +76,7 @@ test("下载线路下拉框支持自动探测与自定义前缀", () => {
   assert.match(html, /id="ghProxyHint"/);
 });
 
-test("打开即加载首个分类，不等待登录", () => {
+test("打开页面先校验会话，登录后加载首个分类", () => {
   assert.match(html, /loadPath\(CATEGORIES\[0\], CATEGORIES\[0\]\.path\)/);
   assert.match(html, /\/store\/api/);
 });
