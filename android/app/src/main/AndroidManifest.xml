@@ -37,5 +37,10 @@
             android:exported="false"
             android:label="下载管理"
             android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+        <activity
+            android:name=".AdbActivity"
+            android:exported="false"
+            android:label="ADB 设备管理"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
     </application>
 </manifest>

@@ -216,6 +216,11 @@ public class DownloadsActivity extends Activity {
 
         if (success) {
             actions.addView(action("安装", "#2563EB", Color.WHITE, () -> install(id)));
+            actions.addView(action("ADB 安装", "#087F74", Color.WHITE, () -> {
+                Intent intent = new Intent(this, AdbActivity.class);
+                intent.putExtra(AdbActivity.EXTRA_DOWNLOAD_ID, id);
+                startActivity(intent);
+            }));
         }
         if (active) {
             actions.addView(action("取消", "#F1F5F9", Color.parseColor("#0F172A"), () -> {

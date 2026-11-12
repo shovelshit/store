@@ -11,12 +11,20 @@ test('ADB transport JVM protocol tests', () => {
     const sources = [
       path.join(root, 'app/src/main/java/io/github/shovelshit/apkstore/adb/AdbClient.java'),
       path.join(root, 'app/src/main/java/io/github/shovelshit/apkstore/adb/AdbIdentity.java'),
+      path.join(root, 'app/src/main/java/io/github/shovelshit/apkstore/adb/AdbOperations.java'),
+      path.join(root, 'app/src/main/java/io/github/shovelshit/apkstore/AdbController.java'),
       path.join(__dirname, 'AdbClientTest.java'),
+      path.join(__dirname, 'AdbOperationsTest.java'),
+      path.join(__dirname, 'AdbControllerTest.java'),
     ];
     const compile = spawnSync('javac', ['-d', temporary, ...sources], { encoding: 'utf8' });
     if (compile.status !== 0) throw new Error(`javac failed:\n${compile.stdout}${compile.stderr}`);
     const run = spawnSync('java', ['-cp', temporary, 'AdbClientTest'], { encoding: 'utf8', timeout: 30000 });
     if (run.status !== 0) throw new Error(`JVM tests failed:\n${run.stdout}${run.stderr}`);
+    const operations = spawnSync('java', ['-cp', temporary, 'AdbOperationsTest'], { encoding: 'utf8', timeout: 30000 });
+    if (operations.status !== 0) throw new Error(`Operations JVM tests failed:\n${operations.stdout}${operations.stderr}`);
+    const controller = spawnSync('java', ['-cp', temporary, 'AdbControllerTest'], { encoding: 'utf8', timeout: 30000 });
+    if (controller.status !== 0) throw new Error(`Controller JVM tests failed:\n${controller.stdout}${controller.stderr}`);
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }

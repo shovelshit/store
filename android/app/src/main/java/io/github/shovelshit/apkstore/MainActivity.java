@@ -92,6 +92,23 @@ public class MainActivity extends Activity {
         fabParams.setMargins(0, 0, dp(18), dp(18));
         root.addView(downloads, fabParams);
 
+        TextView adbTools = new TextView(this);
+        adbTools.setText("ADB");
+        adbTools.setTextSize(13);
+        adbTools.setTextColor(Color.WHITE);
+        adbTools.setGravity(Gravity.CENTER);
+        adbTools.setElevation(dp(6));
+        GradientDrawable adbBackground = new GradientDrawable();
+        adbBackground.setColor(Color.parseColor("#087F74"));
+        adbBackground.setCornerRadius(dp(8));
+        adbTools.setBackground(adbBackground);
+        adbTools.setContentDescription("打开 ADB 设备管理");
+        adbTools.setOnClickListener(view -> startActivity(new Intent(this, AdbActivity.class)));
+        FrameLayout.LayoutParams adbParams = new FrameLayout.LayoutParams(dp(58), dp(44));
+        adbParams.gravity = Gravity.BOTTOM | Gravity.END;
+        adbParams.setMargins(0, 0, dp(116), dp(18));
+        root.addView(adbTools, adbParams);
+
         // 后台下载进度条（有任务时显示，点击进入下载管理）
         downloadBar = new LinearLayout(this);
         downloadBar.setOrientation(LinearLayout.VERTICAL);
