@@ -4,12 +4,12 @@
 // 注意：aapt2 对非 ASCII 路径（例如用户目录含中文）会报 failed to open directory，
 // 因此先把工程复制到纯 ASCII 的暂存目录构建，再把 APK 拷回 android/dist/。
 //
-// 用法: node scripts/build-apk.mjs [--sdk <Android SDK 路径>]
+// 用法: node scripts/build-apk.mjs [--sdk <Android SDK 路径>] [--ks <keystore>] [--dev-signing]
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync
+  chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { deflateRawSync } from "node:zlib";
@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 const ANDROID_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(ANDROID_ROOT, "dist");
 const KEYSTORE = join(ANDROID_ROOT, ".keystore", "debug.keystore");
-const VERSION = "1.2.0";
+const DEV_KEYSTORE = join(ANDROID_ROOT, ".keystore", "development.keystore");
 
 const args = process.argv.slice(2);
 const optionValue = (name) => {
@@ -68,8 +68,7 @@ function findWorkRoot() {
     if (!isAscii(candidate)) continue;
     try {
       mkdirSync(candidate, { recursive: true });
-      writeFileSync(join(candidate, ".write-test"), "ok");
-      return candidate;
+      return mkdtempSync(join(candidate, "apkbuild-"));
     } catch {
       // 换下一个候选
     }
@@ -90,9 +89,19 @@ function compareVersions(a, b) {
 
 function pickBuildTools(sdk) {
   const dir = join(sdk, "build-tools");
-  const versions = readdirSync(dir).filter((name) => existsSync(join(dir, name, "aapt2.exe")));
+  const versions = readdirSync(dir).filter((name) => existsSync(join(dir, name, nativeTool("aapt2"))));
   if (!versions.length) fail(`build-tools 下没有可用的 aapt2: ${dir}`);
   return join(dir, versions.sort(compareVersions).pop());
+}
+
+const nativeTool = (name) => process.platform === "win32" ? `${name}.exe` : name;
+const wrapperTool = (name) => process.platform === "win32" ? `${name}.bat` : name;
+
+function manifestVersion() {
+  const manifest = readFileSync(join(ANDROID_ROOT, "app", "src", "main", "AndroidManifest.xml"), "utf8");
+  const version = manifest.match(/\bandroid:versionName\s*=\s*"([0-9]+(?:\.[0-9]+)*)"/);
+  if (!version) fail("AndroidManifest.xml 缺少有效的 android:versionName");
+  return version[1];
 }
 
 function pickPlatform(sdk) {
@@ -210,13 +219,13 @@ const sdk = findSdk();
 const buildTools = pickBuildTools(sdk);
 const platform = pickPlatform(sdk);
 const work = findWorkRoot();
+process.once("exit", () => rmSync(work, { recursive: true, force: true }));
 
 console.log(`[build-apk] SDK: ${sdk}`);
 console.log(`[build-apk] build-tools: ${buildTools.split(/[\\/]/).pop()}`);
 console.log(`[build-apk] platform: ${platform.name}`);
 console.log(`[build-apk] 暂存目录: ${work}`);
 
-rmSync(work, { recursive: true, force: true });
 const SRC = join(work, "src");
 const BUILD = join(work, "build");
 const OUT = join(work, "dist");
@@ -225,9 +234,9 @@ for (const directory of [BUILD, OUT, join(BUILD, "gen"), join(BUILD, "classes"),
   mkdirSync(directory, { recursive: true });
 }
 
-const tool = (name) => join(buildTools, `${name}.exe`);
-const batch = (name) => join(buildTools, `${name}.bat`);
-const java = (name) => (process.env.JAVA_HOME ? join(process.env.JAVA_HOME, "bin", `${name}.exe`) : name);
+const tool = (name) => join(buildTools, nativeTool(name));
+const batch = (name) => join(buildTools, wrapperTool(name));
+const java = (name) => (process.env.JAVA_HOME ? join(process.env.JAVA_HOME, "bin", nativeTool(name)) : name);
 
 // 1. 编译资源
 run(tool("aapt2"), ["compile", "--dir", join(SRC, "res"), "-o", join(BUILD, "res.zip")], "aapt2 compile");
@@ -283,29 +292,38 @@ run(tool("zipalign"), [
   join(BUILD, "app-aligned.apk")
 ], "zipalign");
 
-// 7. 签名（缺失时生成 debug keystore，构建后回写仓库）
-const signingKey = join(work, "debug.keystore");
-const hasRepoKey = existsSync(KEYSTORE);
-if (hasRepoKey) {
-  copyFileSync(KEYSTORE, signingKey);
-} else {
+// 7. 签名：原有签名优先；新开发签名只能显式启用，且持久保存以供后续构建使用。
+const providedKey = optionValue("--ks");
+if (args.includes("--ks") && !providedKey) fail("--ks 必须指定现有 keystore 路径");
+const developmentSigning = !providedKey && !existsSync(KEYSTORE) && args.includes("--dev-signing");
+const sourceKey = providedKey ? resolve(providedKey) : existsSync(KEYSTORE) ? KEYSTORE : developmentSigning ? DEV_KEYSTORE : null;
+if (!sourceKey) fail("找不到原有签名 keystore；请用 --ks 指定原有密钥，或显式使用 --dev-signing 创建独立开发签名（无法保证覆盖安装旧版）");
+if (developmentSigning && !existsSync(sourceKey)) {
+  mkdirSync(dirname(sourceKey), { recursive: true });
   run(java("keytool"), [
     "-genkeypair", "-v",
-    "-keystore", signingKey,
+    "-keystore", sourceKey,
     "-alias", "androiddebugkey",
     "-keyalg", "RSA", "-keysize", "2048", "-validity", "10000",
     "-storepass", "android", "-keypass", "android",
     "-dname", "CN=Android Debug,O=Android,C=US"
-  ], "keytool (生成 debug 签名)");
+  ], "keytool (生成开发签名)");
+  if (process.platform !== "win32") chmodSync(sourceKey, 0o600);
 }
+if (!existsSync(sourceKey)) fail(`签名 keystore 不存在: ${sourceKey}`);
+const signingKey = join(work, "signing.keystore");
+copyFileSync(sourceKey, signingKey);
+const keyAlias = process.env.APK_KS_ALIAS || "androiddebugkey";
+const storePassword = process.env.APK_KS_PASS || "android";
+const keyPassword = process.env.APK_KEY_PASS || storePassword;
 
 const signed = join(OUT, "apk-store.apk");
 run(batch("apksigner"), [
   "sign",
   "--ks", signingKey,
-  "--ks-key-alias", "androiddebugkey",
-  "--ks-pass", "pass:android",
-  "--key-pass", "pass:android",
+  "--ks-key-alias", keyAlias,
+  "--ks-pass", `pass:${storePassword}`,
+  "--key-pass", `pass:${keyPassword}`,
   "--out", signed,
   join(BUILD, "app-aligned.apk")
 ], "apksigner sign");
@@ -314,16 +332,12 @@ run(batch("apksigner"), ["verify", "--print-certs", signed], "apksigner verify")
 
 // 8. 拷回仓库
 mkdirSync(DIST, { recursive: true });
-const output = join(DIST, `apk-store-${VERSION}.apk`);
+const output = join(DIST, `apk-store-${manifestVersion()}.apk`);
 copyFileSync(signed, output);
-if (!hasRepoKey) {
-  mkdirSync(dirname(KEYSTORE), { recursive: true });
-  copyFileSync(signingKey, KEYSTORE);
-  console.log(`[build-apk] 已保存调试签名: ${KEYSTORE}`);
-}
-
 const sha256 = createHash("sha256").update(readFileSync(output)).digest("hex");
+writeFileSync(`${output}.sha256`, `${sha256}  ${output.split(/[\\/]/).pop()}\n`);
 const size = statSync(output).size;
+if (developmentSigning) console.log(`[build-apk] 开发签名: ${DEV_KEYSTORE}（不能保证覆盖安装原签名 APK）`);
 console.log(`\n[build-apk] 完成: ${output}`);
 console.log(`[build-apk] 大小: ${(size / 1024 / 1024).toFixed(2)} MB`);
 console.log(`[build-apk] SHA-256: ${sha256}`);
