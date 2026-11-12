@@ -45,6 +45,7 @@ public final class AdbOperations {
     private static final Pattern PACKAGE = Pattern.compile("(?:android|[a-zA-Z_][a-zA-Z_0-9]*(?:\\.[a-zA-Z_][a-zA-Z_0-9]*)+)");
     private static final Pattern PERMISSION = Pattern.compile("android\\.permission\\.[A-Z_0-9]+");
     private static final Pattern GRANT = Pattern.compile("(android\\.permission\\.[A-Z_0-9]+):\\s+granted=(true|false)");
+    private static final Pattern USER = Pattern.compile("(?m)^\\s*User (\\d+):");
     private static final String[] RUNTIME = {
         "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE", "ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION",
         "CAMERA", "RECORD_AUDIO"
@@ -56,7 +57,7 @@ public final class AdbOperations {
     public AdbOperations(CommandRunner commands) { this.commands = commands; }
 
     public List<Application> listApplications(boolean system) throws IOException {
-        String output = shell("pm list packages " + (system ? "-s" : "-3"));
+        String output = shell("pm list packages --user 0 " + (system ? "-s" : "-3"));
         List<Application> apps = new ArrayList<>();
         for (String line : output.split("\\r?\\n")) {
             if (line.startsWith("package:")) {
@@ -75,6 +76,15 @@ public final class AdbOperations {
         String dump = shell("dumpsys package " + packageName);
         if (!dump.contains("Package [" + packageName + "]")) throw new IOException("目标应用不存在或权限信息不可读");
         if (!dump.contains("requested permissions:")) throw new IOException("目标应用权限清单不可读");
+        Matcher users = USER.matcher(dump);
+        int userZeroStart = -1, userZeroEnd = dump.length(), globalEnd = dump.length();
+        while (users.find()) {
+            if (globalEnd == dump.length()) globalEnd = users.start();
+            if (userZeroStart >= 0) { userZeroEnd = users.start(); break; }
+            if (users.group(1).equals("0")) userZeroStart = users.end();
+        }
+        String userZero = userZeroStart < 0 ? "" : dump.substring(userZeroStart, userZeroEnd);
+        String global = dump.substring(0, globalEnd);
         List<String> requested = new ArrayList<>();
         boolean inRequested = false;
         for (String line : dump.split("\\r?\\n")) {
@@ -92,8 +102,9 @@ public final class AdbOperations {
             State state = State.UNSUPPORTED;
             if (special) state = appOp(packageName, operation(suffix));
             else if (runtime || secure) {
-                Matcher matcher = GRANT.matcher(dump);
-                state = State.DENIED;
+                Matcher matcher = GRANT.matcher(runtime ? userZero : global);
+                state = runtime && (userZeroStart < 0 || !userZero.contains("runtime permissions:"))
+                        ? State.UNKNOWN : State.DENIED;
                 while (matcher.find()) if (matcher.group(1).equals(name)) {
                     state = Boolean.parseBoolean(matcher.group(2)) ? State.GRANTED : State.DENIED;
                 }
@@ -122,8 +133,8 @@ public final class AdbOperations {
         PermissionSnapshot before = readPermissions(packageName);
         Permission selected = before.find(permission);
         if (selected == null || !selected.mutable) throw new IllegalArgumentException("目标应用未声明此权限");
-        if (special) shell("cmd appops set " + packageName + " " + operation(suffix) + " " + (grant ? "allow" : "ignore"));
-        else shell("pm " + (grant ? "grant" : "revoke") + " " + packageName + " " + permission);
+        if (special) shell("cmd appops set --user 0 " + packageName + " " + operation(suffix) + " " + (grant ? "allow" : "ignore"));
+        else shell("pm " + (grant ? "grant" : "revoke") + " --user 0 " + packageName + " " + permission);
         PermissionSnapshot after = readPermissions(packageName);
         State actual = after.find(permission).state;
         if (actual != (grant ? State.GRANTED : State.DENIED)) throw new IOException("权限修改后未确认目标状态: " + actual);
@@ -141,7 +152,7 @@ public final class AdbOperations {
         String result = null;
         try {
             uploader.upload(source, length, path, progress);
-            result = shell("pm install -r " + path).trim();
+            result = shell("pm install -r --user 0 " + path).trim();
             if (!result.equals("Success")) throw new IOException("安装结果未确认: " + result);
         } catch (IOException error) { failure = error; }
         try { shell("rm -f " + path); }
@@ -158,7 +169,7 @@ public final class AdbOperations {
     }
 
     private State appOp(String packageName, String operation) throws IOException {
-        String output = shell("cmd appops get " + packageName + " " + operation);
+        String output = shell("cmd appops get --user 0 " + packageName + " " + operation);
         Matcher matcher = Pattern.compile("(?m)^\\s*" + operation + ":\\s*(?:mode=)?(allow|ignore|deny|default|foreground)\\b").matcher(output);
         if (!matcher.find()) return State.UNKNOWN;
         return matcher.group(1).equals("allow") ? State.GRANTED : State.DENIED;

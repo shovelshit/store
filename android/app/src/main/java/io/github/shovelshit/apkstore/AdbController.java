@@ -17,6 +17,8 @@ public final class AdbController implements AutoCloseable {
     }
     public interface Factory { Session create() throws IOException; }
     public interface Task<T> { T run(Session session) throws Exception; }
+    public interface ProgressTask<T> { T run(Session session, ProgressPoster progress) throws Exception; }
+    public interface ProgressPoster { void post(Runnable callback); }
     public interface Callback<T> { void success(T result); void failure(Exception error); }
     private final Executor worker, callbackExecutor;
     private final ExecutorService ownedWorker;
@@ -62,6 +64,10 @@ public final class AdbController implements AutoCloseable {
     }
 
     public <T> void submit(Task<T> task, Callback<T> callback) {
+        submitWithProgress((session, progress) -> task.run(session), callback);
+    }
+
+    public <T> void submitWithProgress(ProgressTask<T> task, Callback<T> callback) {
         final long current;
         synchronized (this) { current = generation; }
         worker.execute(() -> {
@@ -69,17 +75,12 @@ public final class AdbController implements AutoCloseable {
             synchronized (this) { if (!valid(current)) return; active = session; }
             if (active == null) { deliver(current, () -> callback.failure(new IOException("ADB 未连接"))); return; }
             try {
-                T result = task.run(active);
+                T result = task.run(active, progress -> deliver(current, progress));
                 deliver(current, () -> callback.success(result));
             } catch (Exception error) { deliver(current, () -> callback.failure(error)); }
         });
     }
 
-    public void postCurrent(Runnable callback) {
-        final long current;
-        synchronized (this) { current = generation; }
-        deliver(current, callback);
-    }
     private void deliver(long current, Runnable callback) {
         callbackExecutor.execute(() -> {
             synchronized (AdbController.this) { if (!valid(current)) return; }

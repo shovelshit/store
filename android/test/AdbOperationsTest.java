@@ -27,17 +27,18 @@ public final class AdbOperationsTest {
         eq(r.commands.size(), 0);
         r.reply("package:com.example.one\npackage:org.other.app\n", 0);
         eq(ops.listApplications(false).size(), 2);
-        eq(r.commands.get(0), "pm list packages -3");
+        eq(r.commands.get(0), "pm list packages --user 0 -3");
         r.reply("package:android\n", 0);
         eq(ops.listApplications(true).size(), 1);
-        eq(r.commands.get(1), "pm list packages -s");
+        eq(r.commands.get(1), "pm list packages --user 0 -s");
 
         String dump = "Package [com.example.one] (123):\n    requested permissions:\n"
                 + "      android.permission.CAMERA\n      android.permission.ACCESS_FINE_LOCATION\n"
                 + "      android.permission.WRITE_SECURE_SETTINGS\n      android.permission.INTERNET\n"
                 + "    install permissions:\n      android.permission.WRITE_SECURE_SETTINGS: granted=true\n"
-                + "    runtime permissions:\n      android.permission.CAMERA: granted=false, flags=[ USER_SET ]\n"
-                + "      android.permission.ACCESS_FINE_LOCATION: granted=true, flags=[ USER_SET ]\n";
+                + "    User 0: installed=true\n      runtime permissions:\n"
+                + "        android.permission.CAMERA: granted=false, flags=[ USER_SET ]\n"
+                + "        android.permission.ACCESS_FINE_LOCATION: granted=true, flags=[ USER_SET ]\n";
         r.reply(dump, 0);
         AdbOperations.PermissionSnapshot permissions = ops.readPermissions("com.example.one");
         eq(permissions.find("android.permission.CAMERA").state, AdbOperations.State.DENIED);
@@ -50,14 +51,28 @@ public final class AdbOperationsTest {
         eq(permissions.find("android.permission.RECORD_AUDIO").state, AdbOperations.State.NOT_DECLARED);
         String revoked = "Package [com.example.one] (123):\n    requested permissions:\n"
                 + "      android.permission.CAMERA\n      android.permission.WRITE_SECURE_SETTINGS\n"
-                + "      android.permission.PACKAGE_USAGE_STATS\n    User 0: installed=true\n      runtime permissions:\n";
+                + "      android.permission.PACKAGE_USAGE_STATS\n    User 0: installed=true\n      runtime permissions:\n"
+                + "    User 10: installed=true\n      runtime permissions:\n"
+                + "        android.permission.CAMERA: granted=true, flags=[ USER_SET ]\n";
         Runner revokedRunner = new Runner();
         revokedRunner.reply(revoked, 0).reply("GET_USAGE_STATS: ignore\n", 0);
         AdbOperations.PermissionSnapshot revokedSnapshot = new AdbOperations(revokedRunner).readPermissions("com.example.one");
         eq(revokedSnapshot.find("android.permission.CAMERA").state, AdbOperations.State.DENIED);
         eq(revokedSnapshot.find("android.permission.WRITE_SECURE_SETTINGS").state, AdbOperations.State.DENIED);
         eq(revokedSnapshot.find("android.permission.PACKAGE_USAGE_STATS").state, AdbOperations.State.DENIED);
-        eq(revokedRunner.commands.get(1), "cmd appops get com.example.one GET_USAGE_STATS");
+        eq(revokedRunner.commands.get(1), "cmd appops get --user 0 com.example.one GET_USAGE_STATS");
+        Runner crossUser = new Runner();
+        crossUser.reply(revoked, 0).reply("GET_USAGE_STATS: ignore\n", 0)
+                .reply("", 0).reply(revoked, 0).reply("GET_USAGE_STATS: ignore\n", 0);
+        try { new AdbOperations(crossUser).setPermission("com.example.one", "android.permission.CAMERA", true);
+            throw new AssertionError("another user's grant confirmed user 0 mutation");
+        } catch (IOException expected) { yes(expected.getMessage().contains("未确认")); }
+        eq(crossUser.commands.get(2), "pm grant --user 0 com.example.one android.permission.CAMERA");
+        Runner absentUser = new Runner();
+        String onlyOtherUser = revoked.replace("    User 0: installed=true\n      runtime permissions:\n", "");
+        absentUser.reply(onlyOtherUser, 0).reply("GET_USAGE_STATS: ignore\n", 0);
+        eq(new AdbOperations(absentUser).readPermissions("com.example.one")
+                .find("android.permission.CAMERA").state, AdbOperations.State.UNKNOWN);
 
         Runner denied = new Runner();
         AdbOperations broken = new AdbOperations(denied);
@@ -70,19 +85,19 @@ public final class AdbOperationsTest {
         change.reply(dump, 0).reply("", 0).reply(dump, 0);
         try { changing.setPermission("com.example.one", "android.permission.CAMERA", true); throw new AssertionError("unconfirmed grant"); }
         catch (IOException expected) { yes(expected.getMessage().contains("未确认")); }
-        eq(change.commands.get(1), "pm grant com.example.one android.permission.CAMERA");
+        eq(change.commands.get(1), "pm grant --user 0 com.example.one android.permission.CAMERA");
 
         Runner undeclared = new Runner();
         undeclared.reply(dump, 0);
         rejected(() -> new AdbOperations(undeclared).setPermission("com.example.one", "android.permission.SYSTEM_ALERT_WINDOW", true));
         eq(undeclared.commands.size(), 1);
         Runner special = new Runner();
-        String overlay = "Package [com.example.one] (123):\n    requested permissions:\n      android.permission.SYSTEM_ALERT_WINDOW\n";
+        String overlay = "Package [com.example.one] (123):\n    requested permissions:\n      android.permission.SYSTEM_ALERT_WINDOW\n    User 0: installed=true\n      runtime permissions:\n";
         special.reply(overlay, 0).reply("SYSTEM_ALERT_WINDOW: mode=ignore\n", 0)
                 .reply("", 0).reply(overlay, 0).reply("SYSTEM_ALERT_WINDOW: allow; time=+1m ago\n", 0);
         eq(new AdbOperations(special).setPermission("com.example.one", "android.permission.SYSTEM_ALERT_WINDOW", true)
                 .find("android.permission.SYSTEM_ALERT_WINDOW").state, AdbOperations.State.GRANTED);
-        eq(special.commands.get(2), "cmd appops set com.example.one SYSTEM_ALERT_WINDOW allow");
+        eq(special.commands.get(2), "cmd appops set --user 0 com.example.one SYSTEM_ALERT_WINDOW allow");
 
         Runner upload = new Runner();
         AdbOperations installing = new AdbOperations(upload);
@@ -95,8 +110,8 @@ public final class AdbOperationsTest {
         try { installing.install(new ByteArrayInputStream(new byte[]{1, 2}), 2, uploader, null); throw new AssertionError("installed"); }
         catch (IOException expected) { yes(expected.getMessage().contains("INSTALL_FAILED_INVALID_APK")); }
         eq(upload.commands.size(), 2);
-        yes(upload.commands.get(0).matches("pm install -r /data/local/tmp/apk-store-[a-f0-9]+\\.apk"));
-        eq(upload.commands.get(1), "rm -f " + upload.commands.get(0).substring("pm install -r ".length()));
+        yes(upload.commands.get(0).matches("pm install -r --user 0 /data/local/tmp/apk-store-[a-f0-9]+\\.apk"));
+        eq(upload.commands.get(1), "rm -f " + upload.commands.get(0).substring("pm install -r --user 0 ".length()));
         eq(events.size(), 1);
         Runner cleanup = new Runner();
         cleanup.reply("Success\n", 0).reply("rm: Permission denied", 1);

@@ -121,7 +121,7 @@ public final class AdbActivity extends Activity {
             public void success(String result) {
                 if (result.startsWith("等待")) { status.setText(result); return; }
                 busy = false; connected = true;
-                target.setText("目标设备：" + result + " · 本机授权身份保存在应用私有目录");
+                target.setText("目标设备：" + result + " · 管理设备用户 0 · 本机授权身份保存在应用私有目录");
                 status.setText("已连接"); updateButtons();
                 controller.submit(s -> new AdbOperations(cmd -> s.shell(cmd, 30000)).androidVersion(), new AdbController.Callback<String>() {
                     public void success(String version) { target.append(" · Android " + version); loadApps(); }
@@ -251,11 +251,11 @@ public final class AdbActivity extends Activity {
         if (!connected || busy || source == null) return;
         busy = true; updateButtons(); status.setText("正在上传安装包…");
         ApkInstallSource chosen = source;
-        controller.submit(session -> {
+        controller.submitWithProgress((session, progress) -> {
             AdbOperations ops = new AdbOperations(cmd -> session.shell(cmd, 120000));
             try (InputStream stream = chosen.open()) {
                 return ops.install(stream, chosen.length, session::push,
-                        (done, total) -> controller.postCurrent(() -> status.setText(done == total
+                        (done, total) -> progress.post(() -> status.setText(done == total
                                 ? "上传完成，正在设备安装…" : "上传 " + (done * 100 / total) + "%")));
             }
         }, new AdbController.Callback<String>() {

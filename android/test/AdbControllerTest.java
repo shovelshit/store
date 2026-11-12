@@ -37,6 +37,32 @@ public final class AdbControllerTest {
         second.disconnect();
         for (Runnable callback : callbacks) callback.run();
         if (events.contains("10.0.2.2:5583") || !newSession.closed) throw new AssertionError("late connect changed target");
+        Fake thirdSession = new Fake();
+        AdbController third = new AdbController(work::add, callbacks::add, () -> thirdSession);
+        third.connect("127.0.0.1", 5555, new AdbController.Callback<String>() {
+            public void success(String value) { }
+            public void failure(Exception error) { throw new AssertionError(error); }
+        });
+        work.remove(0).run();
+        callbacks.clear();
+        final AdbController.ProgressPoster[] delayed = new AdbController.ProgressPoster[1];
+        third.submitWithProgress((s, poster) -> { delayed[0] = poster; return "done"; }, new AdbController.Callback<String>() {
+            public void success(String value) { }
+            public void failure(Exception error) { throw new AssertionError(error); }
+        });
+        work.remove(0).run();
+        callbacks.clear();
+        third.disconnect();
+        third.connect("127.0.0.2", 5556, new AdbController.Callback<String>() {
+            public void success(String value) { }
+            public void failure(Exception error) { throw new AssertionError(error); }
+        });
+        work.remove(0).run();
+        callbacks.clear();
+        delayed[0].post(() -> events.add("old progress on new target"));
+        for (Runnable callback : callbacks) callback.run();
+        if (events.contains("old progress on new target")) throw new AssertionError(events);
+        third.close();
         second.close(); controller.close();
         System.out.println("AdbControllerTest PASS");
     }
