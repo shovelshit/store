@@ -112,6 +112,7 @@ public final class AdbClient implements AutoCloseable {
             for (;;) {
                 Packet p = receiveStream(stream);
                 if (p.command == CLSE) {
+                    send(CLSE, stream.local, stream.remote, new byte[0]);
                     String content = new String(result.toByteArray(), StandardCharsets.UTF_8);
                     Matcher match = Pattern.compile("(?s)\\n" + Pattern.quote(marker) + ":(-?\\d+)\\r?\\n$").matcher(content);
                     if (!match.find()) throw new IOException("ADB shell exit marker missing");
@@ -170,6 +171,9 @@ public final class AdbClient implements AutoCloseable {
             if (code.equals("FAIL")) throw new IOException("ADB sync FAIL: " + new String(status, 8, n, StandardCharsets.UTF_8));
             if (!code.equals("OKAY") || n != 0 || status.length != 8) throw new IOException("Invalid ADB sync status");
             send(CLSE, stream.local, stream.remote, new byte[0]);
+            Packet close = receiveStream(stream);
+            if (close.command != CLSE || close.body.length != 0)
+                throw new IOException("ADB sync stream close missing");
         } catch (IOException e) { close(); throw timedFailure(e, "ADB push"); }
         finally { watchdog.cancel(); }
     }

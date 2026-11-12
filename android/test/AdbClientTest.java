@@ -3,12 +3,14 @@ import io.github.shovelshit.apkstore.adb.AdbIdentity;
 import java.io.*;
 import java.net.*;
 import java.math.BigInteger;
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.*;
 import java.security.interfaces.RSAPublicKey;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.crypto.Cipher;
 
 public final class AdbClientTest {
@@ -96,6 +98,9 @@ public final class AdbClientTest {
     }
     static void shellFixture(InputStream in, OutputStream out, int exit) throws Exception {
         handshake(in, out);
+        shellExchange(in, out, exit);
+    }
+    static void shellExchange(InputStream in, OutputStream out, int exit) throws Exception {
         Packet open = receive(in);
         check(open.cmd == OPEN && new String(open.payload, StandardCharsets.UTF_8).startsWith("shell:"), "shell OPEN");
         int id = open.arg0;
@@ -108,6 +113,8 @@ public final class AdbClientTest {
         send(out, WRTE, 7, id, "uid=2000(shell)\n\n" + token + ":" + exit + "\n");
         check(receive(in).cmd == OKAY, "ack shell data");
         send(out, CLSE, 7, id, "");
+        Packet reciprocal = receive(in);
+        check(reciprocal.cmd == CLSE && reciprocal.arg0 == id && reciprocal.arg1 == 7, "shell reciprocal CLOSE");
     }
     public static void main(String[] args) throws Exception {
         KeyPair identity = key();
@@ -143,6 +150,17 @@ public final class AdbClientTest {
             try (AdbClient client = new AdbClient(identity)) {
                 client.connect("127.0.0.1", port(out), () -> {});
                 check(client.shell("false", 2000).exitCode == 42, "shell error status");
+            }
+        });
+        fixture((in, out) -> {
+            handshake(in, out);
+            shellExchange(in, out, 0);
+            shellExchange(in, out, 0);
+        }, (in, out) -> {
+            try (AdbClient client = new AdbClient(identity)) {
+                client.connect("127.0.0.1", port(out), () -> {});
+                check(client.shell("id", 2000).exitCode == 0, "first shell");
+                check(client.shell("id", 2000).output.equals("uid=2000(shell)\n"), "second shell on same client");
             }
         });
         fixture((in, out) -> {
@@ -196,6 +214,10 @@ public final class AdbClientTest {
             out.write(response, 0, 27); out.flush();
             out.write(response, 27, response.length - 27); out.flush();
             check(receive(in).cmd == OKAY, "sync response ack");
+            Packet localClose = receive(in);
+            check(localClose.cmd == CLSE && localClose.arg0 == id && localClose.arg1 == 8, "sync local CLOSE");
+            send(out, CLSE, 8, id, "");
+            shellExchange(in, out, 0);
         }, (in, out) -> {
             try (AdbClient client = new AdbClient(identity)) {
                 client.connect("127.0.0.1", port(out), () -> {});
@@ -205,6 +227,7 @@ public final class AdbClientTest {
                     check(total == upload.length && done >= progress[0], "monotonic progress"); progress[0] = done;
                 });
                 check(progress[0] == upload.length && source.available() == 0, "complete transfer");
+                check(client.shell("id", 2000).exitCode == 0, "shell after push on same client");
             }
         });
         fixture((in, out) -> {
@@ -285,15 +308,24 @@ public final class AdbClientTest {
                 fails(() -> client.shell("id", 100), "deadline");
             }
         });
+        CountDownLatch largeDataStarted = new CountDownLatch(1);
+        AtomicBoolean observedBlockedWrite = new AtomicBoolean();
         fixture((in, out) -> {
-            handshake(in, out);
+            check(receive(in).cmd == CNXN, "slow-peer CNXN");
+            send(out, CNXN, VERSION, 262144, "device::\0");
             Packet open = receive(in); send(out, OKAY, 13, open.arg0, "");
             check(receive(in).cmd == WRTE, "slow-peer SEND");
             send(out, OKAY, 13, open.arg0, "");
-            Thread.sleep(500); // Deliberately stop reading the upload stream.
+            byte[] header = read(in, 24);
+            check(number(header, 0) == WRTE && number(header, 12) > 60000, "large DATA write started");
+            largeDataStarted.countDown();
+            Thread.sleep(500); // Do not consume DATA payload; a small send buffer must fill.
         }, (in, out) -> {
             try (AdbClient client = new AdbClient(identity)) {
                 client.connect("127.0.0.1", port(out), () -> {});
+                Field socketField = AdbClient.class.getDeclaredField("socket");
+                socketField.setAccessible(true);
+                ((Socket) socketField.get(client)).setSendBufferSize(1024);
                 InputStream repeated = new InputStream() {
                     public int read() { return 7; }
                     public int read(byte[] buffer, int offset, int size) {
@@ -301,8 +333,33 @@ public final class AdbClientTest {
                         return size;
                     }
                 };
+                Thread uploader = Thread.currentThread();
+                Thread inspector = new Thread(() -> {
+                    try {
+                        if (!largeDataStarted.await(1, TimeUnit.SECONDS)) return;
+                        for (int i = 0; i < 50; i++) {
+                            boolean writing = false;
+                            for (StackTraceElement frame : uploader.getStackTrace()) {
+                                if (frame.getClassName().contains("Socket") && frame.getMethodName().toLowerCase().contains("write"))
+                                    writing = true;
+                            }
+                            if (writing) {
+                                Thread.sleep(20);
+                                for (StackTraceElement frame : uploader.getStackTrace()) {
+                                    if (frame.getClassName().contains("Socket") && frame.getMethodName().toLowerCase().contains("write"))
+                                        observedBlockedWrite.set(true);
+                                }
+                                if (observedBlockedWrite.get()) return;
+                            }
+                            Thread.sleep(2);
+                        }
+                    } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                });
+                inspector.start();
                 long start = System.nanoTime();
-                fails(() -> client.push(repeated, 100_000_000, "/tmp/slow.apk", null, 100), "deadline");
+                fails(() -> client.push(repeated, 100_000_000, "/tmp/slow.apk", null, 200), "deadline");
+                inspector.join();
+                check(observedBlockedWrite.get(), "client was blocked in socket write before deadline");
                 check((System.nanoTime() - start) < 2_000_000_000L, "blocked write canceled promptly");
             }
         });
