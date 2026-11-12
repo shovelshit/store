@@ -31,6 +31,25 @@ public final class AdbOperationsTest {
         r.reply("package:android\n", 0);
         eq(ops.listApplications(true).size(), 1);
         eq(r.commands.get(1), "pm list packages --user 0 -s");
+        Runner device = new Runner();
+        device.reply("uid=2000(shell) gid=2000(shell) groups=1004(input)\n", 0)
+                .reply("Google\n", 0).reply("Pixel 2\n", 0).reply("9\n", 0);
+        AdbOperations.DeviceInfo info = new AdbOperations(device).deviceInfo();
+        eq(info.shellIdentity, "uid=2000(shell) gid=2000(shell) groups=1004(input)");
+        eq(info.manufacturer, "Google"); eq(info.model, "Pixel 2"); eq(info.androidVersion, "9");
+        eq(device.commands.get(0), "id");
+        eq(device.commands.get(1), "getprop ro.product.manufacturer");
+        eq(device.commands.get(2), "getprop ro.product.model");
+        eq(device.commands.get(3), "getprop ro.build.version.release");
+        Runner badDevice = new Runner();
+        badDevice.reply("", 0);
+        try { new AdbOperations(badDevice).deviceInfo(); throw new AssertionError("accepted missing shell identity"); }
+        catch (IOException expected) { yes(expected.getMessage().contains("身份")); }
+        Runner missingModel = new Runner();
+        missingModel.reply("uid=2000(shell) gid=2000(shell)\n", 0).reply("Google\n", 0).reply("\n", 0);
+        try { new AdbOperations(missingModel).deviceInfo(); throw new AssertionError("accepted missing model"); }
+        catch (IOException expected) { yes(expected.getMessage().contains("ro.product.model")); }
+        eq(missingModel.commands.size(), 3);
 
         String dump = "Package [com.example.one] (123):\n    requested permissions:\n"
                 + "      android.permission.CAMERA\n      android.permission.ACCESS_FINE_LOCATION\n"
@@ -73,6 +92,10 @@ public final class AdbOperationsTest {
         absentUser.reply(onlyOtherUser, 0).reply("GET_USAGE_STATS: ignore\n", 0);
         eq(new AdbOperations(absentUser).readPermissions("com.example.one")
                 .find("android.permission.CAMERA").state, AdbOperations.State.UNKNOWN);
+        Runner unknownRuntime = new Runner();
+        unknownRuntime.reply(onlyOtherUser, 0).reply("GET_USAGE_STATS: ignore\n", 0);
+        yes(!new AdbOperations(unknownRuntime).readPermissions("com.example.one")
+                .find("android.permission.CAMERA").canGrant());
 
         Runner denied = new Runner();
         AdbOperations broken = new AdbOperations(denied);
@@ -98,6 +121,22 @@ public final class AdbOperationsTest {
         eq(new AdbOperations(special).setPermission("com.example.one", "android.permission.SYSTEM_ALERT_WINDOW", true)
                 .find("android.permission.SYSTEM_ALERT_WINDOW").state, AdbOperations.State.GRANTED);
         eq(special.commands.get(2), "cmd appops set --user 0 com.example.one SYSTEM_ALERT_WINDOW allow");
+        Runner firstGrant = new Runner();
+        firstGrant.reply(overlay, 0).reply("No operations.\n", 0);
+        AdbOperations.Permission unresolved = new AdbOperations(firstGrant).readPermissions("com.example.one")
+                .find("android.permission.SYSTEM_ALERT_WINDOW");
+        eq(unresolved.state, AdbOperations.State.UNKNOWN);
+        yes(unresolved.canGrant());
+        yes(!unresolved.canRevoke());
+        Runner firstGrantMutation = new Runner();
+        firstGrantMutation.reply(overlay, 0).reply("No operations.\n", 0)
+                .reply("", 0).reply(overlay, 0).reply("SYSTEM_ALERT_WINDOW: allow\n", 0);
+        eq(new AdbOperations(firstGrantMutation).setPermission("com.example.one", "android.permission.SYSTEM_ALERT_WINDOW", true)
+                .find("android.permission.SYSTEM_ALERT_WINDOW").state, AdbOperations.State.GRANTED);
+        eq(firstGrantMutation.commands.get(2), "cmd appops set --user 0 com.example.one SYSTEM_ALERT_WINDOW allow");
+        yes(permissions.find("android.permission.CAMERA").canGrant());
+        yes(!permissions.find("android.permission.INTERNET").canGrant());
+        yes(!permissions.find("android.permission.SYSTEM_ALERT_WINDOW").canGrant());
 
         Runner upload = new Runner();
         AdbOperations installing = new AdbOperations(upload);

@@ -60,8 +60,10 @@ public final class AdbActivity extends Activity {
         setContentView(scroll);
         root.addView(text("ADB 设备管理", 20));
         root.addView(text("请在目标设备开启无线 ADB，并确认首次授权提示。仅连接已知设备。", 13));
-        host = input("目标 IP 地址", "127.0.0.1");
-        port = input("端口", "5555");
+        host = input("目标 IP 地址", getSharedPreferences("adb_target", MODE_PRIVATE)
+                .getString("host", "127.0.0.1"));
+        port = input("端口", String.valueOf(getSharedPreferences("adb_target", MODE_PRIVATE)
+                .getInt("port", 5555)));
         port.setInputType(2);
         root.addView(host); root.addView(port);
         target = text("未连接", 14); root.addView(target);
@@ -116,16 +118,29 @@ public final class AdbActivity extends Activity {
         int number;
         try { number = Integer.parseInt(port.getText().toString().trim()); }
         catch (NumberFormatException error) { status.setText("端口必须是 1 到 65535"); return; }
+        if (address.isEmpty() || number < 1 || number > 65535) {
+            status.setText("目标地址或端口无效"); return;
+        }
         connected = false; busy = true; status.setText("正在连接，请在目标设备确认授权…"); updateButtons();
         controller.connect(address, number, new AdbController.Callback<String>() {
             public void success(String result) {
                 if (result.startsWith("等待")) { status.setText(result); return; }
                 busy = false; connected = true;
-                target.setText("目标设备：" + result + " · 管理设备用户 0 · 本机授权身份保存在应用私有目录");
+                getSharedPreferences("adb_target", MODE_PRIVATE).edit()
+                        .putString("host", address).putInt("port", number).apply();
+                target.setText("目标设备：" + result + " · 管理设备用户 0 · 正在读取设备信息…");
                 status.setText("已连接"); updateButtons();
-                controller.submit(s -> new AdbOperations(cmd -> s.shell(cmd, 30000)).androidVersion(), new AdbController.Callback<String>() {
-                    public void success(String version) { target.append(" · Android " + version); loadApps(); }
-                    public void failure(Exception error) { status.setText("读取设备版本失败：" + error.getMessage()); loadApps(); }
+                controller.submit(s -> new AdbOperations(cmd -> s.shell(cmd, 30000)).deviceInfo(), new AdbController.Callback<AdbOperations.DeviceInfo>() {
+                    public void success(AdbOperations.DeviceInfo info) {
+                        target.setText("目标设备：" + result + " · " + info.manufacturer + " " + info.model
+                                + " · Android " + info.androidVersion + "\n执行身份：" + info.shellIdentity
+                                + " · 管理设备用户 0\n本机授权身份保存在应用私有目录");
+                        loadApps();
+                    }
+                    public void failure(Exception error) {
+                        target.setText("目标设备：" + result + " · 管理设备用户 0 · 设备信息不可用");
+                        status.setText("读取设备信息失败：" + error.getMessage()); loadApps();
+                    }
                 });
             }
             public void failure(Exception error) { busy = false; status.setText("连接失败：" + error.getMessage()); updateButtons(); }
@@ -191,9 +206,9 @@ public final class AdbActivity extends Activity {
                     LinearLayout line = row();
                     TextView label = text(permission.name.substring("android.permission.".length()) + " · " + permission.state, 12);
                     line.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-                    if (permission.mutable && permission.state != AdbOperations.State.UNKNOWN) {
-                        line.addView(button(permission.state == AdbOperations.State.GRANTED ? "撤销" : "授予", () -> {
-                            boolean grant = permission.state != AdbOperations.State.GRANTED;
+                    if (permission.canGrant() || permission.canRevoke()) {
+                        line.addView(button(permission.canRevoke() ? "撤销" : "授予", () -> {
+                            boolean grant = permission.canGrant();
                             new AlertDialog.Builder(AdbActivity.this).setTitle("确认修改目标权限")
                                     .setMessage(snapshot.packageName + "\n" + permission.name + "\n" + (grant ? "授予" : "撤销"))
                                     .setNegativeButton("取消", null)

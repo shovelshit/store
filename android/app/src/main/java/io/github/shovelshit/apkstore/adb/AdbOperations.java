@@ -29,6 +29,18 @@ public final class AdbOperations {
         Permission(String name, State state, boolean mutable) {
             this.name = name; this.state = state; this.mutable = mutable;
         }
+        public boolean canGrant() {
+            return mutable && (state == State.DENIED || state == State.UNKNOWN
+                    && Arrays.asList(SPECIAL).contains(name.substring("android.permission.".length())));
+        }
+        public boolean canRevoke() { return mutable && state == State.GRANTED; }
+    }
+    public static final class DeviceInfo {
+        public final String shellIdentity, manufacturer, model, androidVersion;
+        DeviceInfo(String shellIdentity, String manufacturer, String model, String androidVersion) {
+            this.shellIdentity = shellIdentity; this.manufacturer = manufacturer;
+            this.model = model; this.androidVersion = androidVersion;
+        }
     }
     public static final class PermissionSnapshot {
         public final String packageName;
@@ -70,6 +82,23 @@ public final class AdbOperations {
     }
 
     public String androidVersion() throws IOException { return shell("getprop ro.build.version.release").trim(); }
+
+    public DeviceInfo deviceInfo() throws IOException {
+        String identity = shell("id").trim();
+        if (!identity.matches("(?s)^uid=[0-9]+\\b.*") || identity.length() > 512) {
+            throw new IOException("无法确认目标设备的 ADB 执行身份");
+        }
+        String manufacturer = property("ro.product.manufacturer");
+        String model = property("ro.product.model");
+        String version = property("ro.build.version.release");
+        return new DeviceInfo(identity, manufacturer, model, version);
+    }
+
+    private String property(String name) throws IOException {
+        String value = shell("getprop " + name).trim();
+        if (value.isEmpty() || value.length() > 128) throw new IOException("设备信息不可读: " + name);
+        return value;
+    }
 
     public PermissionSnapshot readPermissions(String packageName) throws IOException {
         validPackage(packageName);
