@@ -223,6 +223,12 @@ public class MainActivity extends Activity {
             String fileName = URLUtil.guessFileName(url, contentDisposition,
                     "application/vnd.android.package-archive");
             DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+            Uri target = Uri.parse(url);
+            Uri home = Uri.parse(HOME_URL);
+            if (home.getHost().equalsIgnoreCase(target.getHost()) && "https".equalsIgnoreCase(target.getScheme())) {
+                String cookie = CookieManager.getInstance().getCookie(url);
+                if (cookie != null && !cookie.isEmpty()) request.addRequestHeader("Cookie", cookie);
+            }
             request.setMimeType("application/vnd.android.package-archive");
             request.setTitle(fileName);
             request.setDescription("正在下载安装包");

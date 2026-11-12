@@ -61,7 +61,7 @@ test("GitHub 发布页支持配置账号与下载线路", () => {
   assert.match(html, /id="ghProxyMode"/);
   assert.match(html, /GH_CANDIDATES/);
   assert.match(html, /function proxyUrl\(url\)/);
-  assert.match(html, /\/store\/api\/github\/releases/);
+  assert.match(html, /githubApi\(`releases\?/);
   assert.match(html, /data-mode="github"/);
 });
 
@@ -74,6 +74,15 @@ test("下载线路下拉框支持自动探测与自定义前缀", () => {
   assert.match(html, /function deliveryUrl\(url\)/);
   assert.match(html, /mode: 'no-cors'/);
   assert.match(html, /id="ghProxyHint"/);
+});
+
+test("GitHub 账号和 Token 由服务端保存，仓库与 Release 按需加载", () => {
+  assert.match(html, /id="ghToken"/);
+  assert.match(html, /id="ghAccounts"/);
+  assert.match(html, /githubApi\('accounts'/);
+  assert.match(html, /githubApi\(`repos\?/);
+  assert.match(html, /data-gh-repo/);
+  assert.doesNotMatch(html, /localStorage\.setItem\('gh:token'/);
 });
 
 test("打开页面先校验会话，登录后加载首个分类", () => {

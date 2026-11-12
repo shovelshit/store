@@ -425,6 +425,12 @@
       <label class="gh-field">GitHub 账号
         <input id="ghUser" type="text" spellcheck="false" autocomplete="off" placeholder="例如 shovelshit" />
       </label>
+      <label class="gh-field">已保存账号
+        <select id="ghAccounts"><option value="">选择账号</option></select>
+      </label>
+      <label class="gh-field">访问 Token（可选）
+        <input id="ghToken" type="password" autocomplete="new-password" placeholder="留空沿用已保存 Token" />
+      </label>
       <label class="gh-field">下载线路
         <select id="ghProxyMode">
           <option value="auto">自动探测（推荐）</option>
@@ -438,11 +444,13 @@
       <label class="gh-field" id="ghCustomWrap" hidden>自定义前缀
         <input id="ghProxyCustom" type="text" spellcheck="false" autocomplete="off" placeholder="https://你的加速站/" />
       </label>
-      <button class="gh-save" id="ghSave" type="button">保存并刷新</button>
+      <button class="gh-save" id="ghSave" type="button">保存并加载</button>
+      <button class="action" id="ghDelete" type="button">删除账号</button>
     </div>
     <div class="gh-status" id="ghProxyHint"></div>
     <div class="gh-status" id="ghStatus"></div>
     <div id="ghList"></div>
+    <button class="action" id="ghMore" type="button" hidden>加载更多仓库</button>
   </section>
 </main>
 
@@ -508,6 +516,11 @@
     ghProxy: '',
     ghProxyOk: null,
     ghLoaded: false,
+    ghAccounts: [],
+    ghRepos: [],
+    ghPage: 0,
+    ghReleaseCache: {},
+    ghRequestId: 0,
   };
 
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -768,55 +781,84 @@
     renderProxyHint();
   }
 
-  async function loadGithub(force) {
-    const status = $('#ghStatus');
-    if (!status) return;
-    refreshProxyState();
-    status.textContent = `正在扫描 ${state.ghUser} 的公开仓库 releases…`;
-    $('#ghList').innerHTML = '';
-    try {
-      const query = new URLSearchParams({ user: state.ghUser });
-      if (force) query.set('refresh', '1');
-      const response = await fetch(`/store/api/github/releases?${query.toString()}`);
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-      state.ghLoaded = true;
-      renderGithub(data);
-    } catch (error) {
-      status.textContent = `加载失败：${error.message}`;
-    }
+  async function githubApi(path, options) {
+    const response = await fetch(`/store/api/github/${path}`, options);
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    return body;
   }
 
-  function renderGithub(data) {
+  async function loadGithubAccounts() {
+    const data = await githubApi('accounts');
+    state.ghAccounts = data.accounts || [];
+    $('#ghAccounts').innerHTML = '<option value="">选择账号</option>' + state.ghAccounts.map((entry) =>
+      `<option value="${escapeHtml(entry.login)}">${escapeHtml(entry.login)}${entry.hasToken ? ' · Token 已保存' : ''}</option>`
+    ).join('');
+    $('#ghAccounts').value = state.ghAccounts.find((entry) => entry.login.toLowerCase() === state.ghUser.toLowerCase())?.login || '';
+  }
+
+  async function loadGithub() {
+    const requestId = ++state.ghRequestId;
+    refreshProxyState();
+    state.ghPage = 0;
+    state.ghLoaded = false;
+    state.ghRepos = [];
+    state.ghReleaseCache = {};
+    $('#ghMore').hidden = true;
+    $('#ghMore').disabled = true;
     const status = $('#ghStatus');
-    const list = $('#ghList');
-    if (!data.repos?.length) {
-      status.textContent = `${data.user} 下没有找到带 release 的仓库`;
-      list.innerHTML = '';
-      return;
-    }
-    status.textContent = `${data.user} · ${data.repoCount} 个仓库有 release · 更新于 ${formatDate(data.fetchedAt)}`;
-    list.innerHTML = data.repos.map((repo) => {
-      const releases = repo.releases.map((release) => {
-        const assets = release.assets.length
-          ? release.assets.map((asset) => `<div class="gh-asset">
-              <span class="gh-name" title="${escapeHtml(asset.name)}">${escapeHtml(asset.name)}</span>
-              <span class="gh-size">${formatSize(asset.size)}</span>
-              <button class="action primary" type="button" data-gh-url="${escapeHtml(asset.url)}">下载</button>
-            </div>`).join('')
-          : '<div class="gh-status" style="margin:0">该版本没有附件</div>';
-        return `<div class="gh-release">
+    status.textContent = `正在加载 ${state.ghUser} 的仓库…`;
+    $('#ghList').innerHTML = '';
+    try {
+      const data = await githubApi(`repos?${new URLSearchParams({ account: state.ghUser, page: '1' })}`);
+      if (requestId !== state.ghRequestId) return;
+      state.ghRepos = data.repos || [];
+      state.ghPage = 1;
+      $('#ghMore').hidden = !data.hasMore;
+      $('#ghMore').disabled = !data.hasMore;
+      state.ghReleaseCache = {};
+      state.ghLoaded = true;
+      status.textContent = `${state.ghUser} · ${state.ghRepos.length} 个仓库`;
+      renderGithub();
+    } catch (error) { if (requestId === state.ghRequestId) status.textContent = `加载失败：${error.message}`; }
+  }
+
+  $('#ghMore').addEventListener('click', async () => {
+    const button = $('#ghMore');
+    if (button.disabled || !state.ghLoaded || state.ghPage < 1) return;
+    const requestId = state.ghRequestId;
+    button.disabled = true;
+    try {
+      const page = state.ghPage + 1;
+      const data = await githubApi(`repos?${new URLSearchParams({ account: state.ghUser, page: String(page) })}`);
+      if (requestId !== state.ghRequestId) return;
+      state.ghRepos.push(...data.repos);
+      state.ghPage = page;
+      button.hidden = !data.hasMore;
+      $('#ghStatus').textContent = `${state.ghUser} · 已加载 ${state.ghRepos.length} 个仓库`;
+      renderGithub();
+    } catch (error) { if (requestId === state.ghRequestId) $('#ghStatus').textContent = `加载仓库失败：${error.message}`; }
+    finally { if (requestId === state.ghRequestId) button.disabled = button.hidden; }
+  });
+
+  function renderGithub() {
+    $('#ghList').innerHTML = state.ghRepos.map((repo) => {
+      const releases = state.ghReleaseCache[repo.fullName];
+      const detail = releases === undefined ? '' : releases.length === 0
+        ? '<div class="gh-release gh-status">暂无 Release</div>'
+        : releases.map((release) => `<div class="gh-release">
           <div class="gh-tag"><b>${escapeHtml(release.tag)}</b> · ${formatDate(release.publishedAt)}${release.prerelease ? ' · 预发布' : ''}</div>
-          ${assets}
-        </div>`;
-      }).join('');
+          ${(release.assets || []).map((asset) => {
+            const url = asset.url || `/store/api/github/asset?${new URLSearchParams({ account: state.ghUser, repo: repo.fullName, id: String(asset.id) })}`;
+            return `<div class="gh-asset"><span class="gh-name" title="${escapeHtml(asset.name)}">${escapeHtml(asset.name)}</span>
+              <span class="gh-size">${formatSize(asset.size)}</span>
+              <button class="action primary" type="button" data-gh-url="${escapeHtml(url)}">下载</button></div>`;
+          }).join('') || '<div class="gh-status">该版本没有附件</div>'}
+        </div>`).join('');
       return `<div class="gh-repo">
-        <div class="gh-repo-head">
-          <a href="${escapeHtml(repo.htmlUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(repo.fullName)}</a>
-          ${repo.description ? `<span>${escapeHtml(repo.description)}</span>` : ''}
-        </div>
-        ${releases}
-      </div>`;
+        <div class="gh-repo-head"><button class="action" type="button" data-gh-repo="${escapeHtml(repo.fullName)}" title="加载 Release">${escapeHtml(repo.fullName)}</button>
+          ${repo.private ? '<span>私有</span>' : ''}${repo.description ? `<span>${escapeHtml(repo.description)}</span>` : ''}</div>
+        ${detail}</div>`;
     }).join('');
   }
 
@@ -1029,7 +1071,27 @@
     const githubTab = target.closest('[data-mode="github"]');
     if (githubTab) {
       setMode('github');
-      if (!state.ghLoaded) await loadGithub();
+      if (!state.ghLoaded) {
+        try { await loadGithubAccounts(); } catch (error) { $('#ghStatus').textContent = `加载账号失败：${error.message}`; }
+        await loadGithub();
+      }
+      return;
+    }
+
+    const ghRepo = target.closest('[data-gh-repo]');
+    if (ghRepo) {
+      const repo = ghRepo.dataset.ghRepo;
+      const requestId = state.ghRequestId;
+      if (state.ghReleaseCache[repo] === undefined) {
+        ghRepo.disabled = true;
+        try {
+          const data = await githubApi(`releases?${new URLSearchParams({ account: state.ghUser, repo })}`);
+          if (requestId !== state.ghRequestId) return;
+          state.ghReleaseCache[repo] = data.releases || [];
+          renderGithub();
+        } catch (error) { if (requestId === state.ghRequestId) $('#ghStatus').textContent = `加载 Release 失败：${error.message}`; }
+        finally { ghRepo.disabled = false; }
+      }
       return;
     }
 
@@ -1037,7 +1099,7 @@
     if (ghDownload) {
       event.stopPropagation();
       const original = ghDownload.dataset.ghUrl;
-      const finalUrl = deliveryUrl(original);
+      const finalUrl = original.startsWith('/store/api/github/asset?') ? original : deliveryUrl(original);
       triggerDownload(finalUrl);
       toast(finalUrl === original ? '已开始下载（直连）' : '已开始下载（加速）');
       return;
@@ -1172,6 +1234,9 @@
 
   // ===== 启动 =====
   $('#ghUser').value = state.ghUser;
+  $('#ghAccounts').addEventListener('change', (event) => {
+    if (event.target.value) $('#ghUser').value = event.target.value;
+  });
   $('#ghProxyMode').value = state.ghMode;
   $('#ghProxyCustom').value = state.ghCustom;
   $('#ghCustomWrap').hidden = state.ghMode !== 'custom';
@@ -1204,8 +1269,45 @@
     localStorage.setItem('gh:mode', state.ghMode);
     localStorage.setItem('gh:custom', state.ghCustom);
     state.ghProxyOk = null;
+    state.ghRequestId += 1;
+    state.ghPage = 0;
     state.ghLoaded = false;
-    await loadGithub(true);
+    state.ghReleaseCache = {};
+    state.ghRepos = [];
+    $('#ghList').innerHTML = '';
+    $('#ghMore').hidden = true;
+    $('#ghMore').disabled = true;
+    try {
+      await githubApi('accounts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login: state.ghUser, token: $('#ghToken').value.trim() })
+      });
+      $('#ghToken').value = '';
+      await loadGithubAccounts();
+      state.ghLoaded = false;
+      await loadGithub();
+    } catch (error) { $('#ghStatus').textContent = `保存失败：${error.message}`; }
+  });
+
+  $('#ghDelete').addEventListener('click', async () => {
+    const login = $('#ghUser').value.trim();
+    if (!login) return;
+    state.ghRequestId += 1;
+    state.ghPage = 0;
+    state.ghReleaseCache = {};
+    state.ghRepos = [];
+    state.ghLoaded = false;
+    $('#ghList').innerHTML = '';
+    $('#ghMore').hidden = true;
+    $('#ghMore').disabled = true;
+    try {
+      await githubApi('accounts', {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login })
+      });
+      $('#ghToken').value = '';
+      await loadGithubAccounts();
+      $('#ghStatus').textContent = `${login} 的账号配置已删除`;
+    } catch (error) { $('#ghStatus').textContent = `删除失败：${error.message}`; }
   });
 
   renderTabs();
