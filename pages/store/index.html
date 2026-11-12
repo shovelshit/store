@@ -334,16 +334,16 @@
     .gh-status { font-size: 12px; color: var(--muted); margin: 2px 2px 10px; }
     #ghList { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
     .gh-repo {
-      min-width: 0; height: 155px; display: flex; flex-direction: column;
-      padding: 12px; background: #fff; border: 1px solid var(--line); border-radius: 8px;
+      min-width: 0; height: 124px; display: flex; flex-direction: column;
+      padding: 8px; background: #fff; border: 1px solid var(--line); border-radius: 8px;
     }
     .gh-repo-head { min-width: 0; display: flex; gap: 6px; align-items: flex-start; }
-    .gh-repo-title { min-width: 0; flex: 1; font-size: 13px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+    .gh-repo-title { min-width: 0; flex: 1; font-size: 12.5px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
     .gh-visibility { flex: none; color: #9a3412; background: #fff3e8; border-radius: 4px; padding: 2px 5px; font-size: 10px; }
-    .gh-description { margin: 7px 0; color: var(--muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-    .gh-repo-foot { margin-top: auto; display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
-    .gh-repo-foot time { width: 100%; min-width: 0; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; }
-    .gh-repo-foot .action { margin-left: auto; padding: 0 8px; }
+    .gh-description { margin: 4px 0; color: var(--muted); font-size: 11px; line-height: 1.3; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+    .gh-repo-foot { margin-top: auto; min-width: 0; display: flex; align-items: center; gap: 3px; }
+    .gh-repo-foot time { min-width: 0; flex: 1; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .gh-repo-foot .action { padding: 0 6px; font-size: 11px; }
     .gh-dialog { width: min(680px, calc(100vw - 28px)); max-height: min(82vh, 820px); padding: 0; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 24px 70px rgba(15, 23, 42, .25); }
     .gh-dialog::backdrop { background: rgba(15, 23, 42, .55); }
     .gh-dialog-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
@@ -360,7 +360,6 @@
     @media (max-width: 1099px) { #ghList { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
     @media (max-width: 699px) {
       #ghList { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-      .gh-repo { padding: 9px; }
       .gh-asset { flex-wrap: wrap; }
       .gh-asset .gh-name { flex-basis: 100%; }
     }
@@ -899,11 +898,13 @@
 
   function renderGithub() {
     $('#ghList').innerHTML = state.ghRepos.map((repo) => {
+      const name = repo.name || repo.fullName.split('/').pop();
+      const updated = repo.pushedAt ? formatDate(repo.pushedAt) : '';
       return `<article class="gh-repo">
-        <div class="gh-repo-head"><span class="gh-repo-title" title="${escapeHtml(repo.fullName)}">${escapeHtml(repo.fullName)}</span>
+        <div class="gh-repo-head"><span class="gh-repo-title" title="${escapeHtml(repo.fullName)}">${escapeHtml(name)}</span>
           ${repo.private ? '<span class="gh-visibility">私有</span>' : ''}</div>
         <p class="gh-description">${escapeHtml(repo.description || '')}</p>
-        <div class="gh-repo-foot"><time>${repo.pushedAt ? `更新 ${escapeHtml(formatDate(repo.pushedAt))}` : ''}</time>
+        <div class="gh-repo-foot"><time title="${updated ? `更新 ${escapeHtml(updated)}` : ''}">${updated ? `更新 ${escapeHtml(updated.slice(5))}` : ''}</time>
           <button class="action ghost" type="button" data-gh-repo="${escapeHtml(repo.fullName)}" aria-label="查看 ${escapeHtml(repo.fullName)} 的 Release">查看 Release</button></div>
       </article>`;
     }).join('');

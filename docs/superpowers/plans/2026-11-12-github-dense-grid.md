@@ -12,7 +12,7 @@
 
 - User requirement: “是要能展示更多的仓库 不是一个仓库占一行”.
 - Use four columns from 1100px, three columns from 700px through 1099px, and two columns below 700px. At 390px and 1280px no horizontal page overflow is allowed.
-- Cards must remain compact (target 145–165px high), with title, visibility tag, at most two description lines, update date, and view-release action. All release details remain outside the grid.
+- Cards must remain compact (target 120–135px high), with title, visibility tag, at most two description lines, update date and view-release action on one footer row. Show the repository name without repeating the selected owner on every card; retain fullName in title/accessibility/action data. All release details remain outside the grid.
 - Preserve account selection, saved account tokens, pagination, permission hints, lazy release loading, authenticated same-origin private asset URLs, and proxy handling.
 - Never put a PAT in source, fixtures, URLs, localStorage, logs, or screenshots. No backend or D1 changes; do not use tokens supplied in earlier chat messages.
 - Default-collapse account/token/proxy editing in a settings section; keep saved-account selection, token-configured state, refresh, and settings access visible.

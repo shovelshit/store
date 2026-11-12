@@ -91,6 +91,21 @@ test('repository cards open a named dialog and fetch only the chosen releases', 
   assert.doesNotMatch(f.elements['#ghList'].innerHTML, /v1/);
 });
 
+test('card shows the short repository name while its action retains the full identity', () => {
+  const f = fixture();
+  f.state.ghRepos = [
+    { name: 'app', fullName: 'alice/app', pushedAt: '2026-11-12' },
+    { fullName: 'alice/other' },
+    { name: '<safe>', fullName: 'alice/<safe>' }
+  ];
+  f.scope.renderGithub();
+  const cards = f.elements['#ghList'].innerHTML;
+  assert.match(cards, /class="gh-repo-title" title="alice\/app">app<\/span>/);
+  assert.match(cards, /class="gh-repo-title" title="alice\/other">other<\/span>/);
+  assert.match(cards, /class="gh-repo-title" title="alice\/&lt;safe&gt;">&lt;safe&gt;<\/span>/);
+  assert.match(cards, /data-gh-repo="alice\/app" aria-label="查看 alice\/app 的 Release"/);
+});
+
 test('cached releases reopen without a second request and closing restores focus', async () => {
   const f = fixture();
   const first = f.click('ghRepo', 'alice/app');
