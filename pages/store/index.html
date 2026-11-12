@@ -301,10 +301,13 @@
     /* ===== GitHub 发布 ===== */
     .gh { display: none; }
     .gh.open { display: block; }
+    .gh-toolbar { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 10px; }
+    .gh-toolbar .gh-field select { min-width: 180px; }
+    .gh-settings { margin-bottom: 12px; }
+    .gh-settings summary { cursor: pointer; font-size: 12px; color: var(--brand-dark); font-weight: 600; }
     .gh-config {
       display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
-      background: #fff; border: 1px solid var(--line); border-radius: 14px;
-      padding: 12px 14px; margin-bottom: 12px;
+      padding: 12px 0;
     }
     .gh-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
     .gh-field input, .gh-field select {
@@ -329,25 +332,38 @@
     }
     .gh-save:hover { background: var(--brand-dark); }
     .gh-status { font-size: 12px; color: var(--muted); margin: 2px 2px 10px; }
+    #ghList { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
     .gh-repo {
-      background: #fff; border: 1px solid var(--line); border-radius: 14px;
-      margin-bottom: 12px; overflow: hidden;
+      min-width: 0; height: 155px; display: flex; flex-direction: column;
+      padding: 12px; background: #fff; border: 1px solid var(--line); border-radius: 8px;
     }
-    .gh-repo-head {
-      display: flex; gap: 10px; align-items: baseline;
-      padding: 12px 14px; border-bottom: 1px solid #f1f4f9;
-    }
-    .gh-repo-head a { color: var(--brand); font-weight: 700; font-size: 14px; text-decoration: none; }
-    .gh-repo-head a:hover { text-decoration: underline; }
-    .gh-repo-head span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .gh-repo-head { min-width: 0; display: flex; gap: 6px; align-items: flex-start; }
+    .gh-repo-title { min-width: 0; flex: 1; font-size: 13px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+    .gh-visibility { flex: none; color: #9a3412; background: #fff3e8; border-radius: 4px; padding: 2px 5px; font-size: 10px; }
+    .gh-description { margin: 7px 0; color: var(--muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+    .gh-repo-foot { margin-top: auto; display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
+    .gh-repo-foot time { width: 100%; min-width: 0; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; }
+    .gh-repo-foot .action { margin-left: auto; padding: 0 8px; }
+    .gh-dialog { width: min(680px, calc(100vw - 28px)); max-height: min(82vh, 820px); padding: 0; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 24px 70px rgba(15, 23, 42, .25); }
+    .gh-dialog::backdrop { background: rgba(15, 23, 42, .55); }
+    .gh-dialog-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+    .gh-dialog-head h2 { min-width: 0; flex: 1; margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+    .gh-dialog-content { max-height: calc(82vh - 62px); overflow-y: auto; padding: 8px 16px 16px; }
     .gh-release { padding: 10px 14px; border-bottom: 1px solid #f1f4f9; }
     .gh-release:last-child { border-bottom: 0; }
     .gh-tag { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
     .gh-tag b { color: var(--text); font-size: 13px; }
     .gh-asset { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
-    .gh-asset .gh-name { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .gh-asset .gh-name { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
     .gh-asset .gh-size { font-size: 12px; color: var(--muted); white-space: nowrap; }
     .gh-asset .action { height: 32px; }
+    @media (max-width: 1099px) { #ghList { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+    @media (max-width: 699px) {
+      #ghList { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .gh-repo { padding: 9px; }
+      .gh-asset { flex-wrap: wrap; }
+      .gh-asset .gh-name { flex-basis: 100%; }
+    }
 
     /* ===== 平板 / 触屏 / 手机 ===== */
     @media (min-width: 769px) and (max-width: 1180px) {
@@ -421,38 +437,53 @@
   <nav class="pager" id="pager" aria-label="分页"></nav>
 
   <section class="gh" id="ghPanel" aria-label="GitHub 发布">
-    <div class="gh-config">
-      <label class="gh-field">GitHub 账号
-        <input id="ghUser" type="text" spellcheck="false" autocomplete="off" placeholder="例如 shovelshit" />
-      </label>
+    <div class="gh-toolbar">
       <label class="gh-field">已保存账号
         <select id="ghAccounts"><option value="">选择账号</option></select>
       </label>
-      <label class="gh-field">访问 Token（可选）
-        <input id="ghToken" type="password" autocomplete="new-password" placeholder="留空沿用已保存 Token" />
-      </label>
-      <label class="gh-field">下载线路
-        <select id="ghProxyMode">
-          <option value="auto">自动探测（推荐）</option>
-          <option value="https://gh-proxy.com/">gh-proxy.com</option>
-          <option value="https://ghfast.top/">ghfast.top</option>
-          <option value="https://ghproxy.net/">ghproxy.net</option>
-          <option value="direct">直连 GitHub</option>
-          <option value="custom">自定义…</option>
-        </select>
-      </label>
-      <label class="gh-field" id="ghCustomWrap" hidden>自定义前缀
-        <input id="ghProxyCustom" type="text" spellcheck="false" autocomplete="off" placeholder="https://你的加速站/" />
-      </label>
-      <button class="gh-save" id="ghSave" type="button">保存并加载</button>
-      <button class="action" id="ghDelete" type="button">删除账号</button>
+      <div class="gh-status" id="ghTokenState"></div>
+      <button class="action ghost" id="ghRefresh" type="button">刷新</button>
     </div>
+    <details class="gh-settings" id="ghSettings">
+      <summary>账号与下载设置</summary>
+      <div class="gh-config">
+        <label class="gh-field">GitHub 账号
+          <input id="ghUser" type="text" spellcheck="false" autocomplete="off" placeholder="例如 shovelshit" />
+        </label>
+        <label class="gh-field">访问 Token（可选）
+          <input id="ghToken" type="password" autocomplete="new-password" placeholder="留空沿用已保存 Token" />
+        </label>
+        <label class="gh-field">下载线路
+          <select id="ghProxyMode">
+            <option value="auto">自动探测（推荐）</option>
+            <option value="https://gh-proxy.com/">gh-proxy.com</option>
+            <option value="https://ghfast.top/">ghfast.top</option>
+            <option value="https://ghproxy.net/">ghproxy.net</option>
+            <option value="direct">直连 GitHub</option>
+            <option value="custom">自定义…</option>
+          </select>
+        </label>
+        <label class="gh-field" id="ghCustomWrap" hidden>自定义前缀
+          <input id="ghProxyCustom" type="text" spellcheck="false" autocomplete="off" placeholder="https://你的加速站/" />
+        </label>
+        <button class="gh-save" id="ghSave" type="button">保存并加载</button>
+        <button class="action" id="ghDelete" type="button">删除账号</button>
+      </div>
+    </details>
     <div class="gh-status" id="ghProxyHint"></div>
     <div class="gh-status" id="ghStatus"></div>
     <div id="ghList"></div>
     <button class="action" id="ghMore" type="button" hidden>加载更多仓库</button>
   </section>
 </main>
+
+<dialog class="gh-dialog" id="ghDialog" aria-labelledby="ghDialogTitle">
+  <div class="gh-dialog-head">
+    <h2 id="ghDialogTitle"></h2>
+    <button class="action ghost" type="button" data-gh-close aria-label="关闭 Release">关闭</button>
+  </div>
+  <div class="gh-dialog-content" id="ghDialogContent"></div>
+</dialog>
 
 <div class="viewer" id="viewer" role="dialog" aria-modal="true" aria-label="图片预览">
   <button class="viewer-close" type="button" data-close-viewer aria-label="关闭">×</button>
@@ -521,6 +552,8 @@
     ghPage: 0,
     ghReleaseCache: {},
     ghRequestId: 0,
+    ghDialogRequestId: 0,
+    ghDialogOpener: null,
     ghUpstreamPrivateCount: 0,
     ghClassicRepoScopeMissing: false,
   };
@@ -672,6 +705,7 @@
   }
 
   function setMode(mode) {
+    if (mode !== 'github') closeGithubDialog();
     state.mode = mode;
     const files = mode !== 'github';
     $('#crumb').hidden = !files;
@@ -797,6 +831,8 @@
       `<option value="${escapeHtml(entry.login)}">${escapeHtml(entry.login)}${entry.hasToken ? ' · Token 已保存' : ''}</option>`
     ).join('');
     $('#ghAccounts').value = state.ghAccounts.find((entry) => entry.login.toLowerCase() === state.ghUser.toLowerCase())?.login || '';
+    const selected = state.ghAccounts.find((entry) => entry.login.toLowerCase() === state.ghUser.toLowerCase());
+    $('#ghTokenState').textContent = selected?.hasToken ? 'Token 已保存' : '未配置 Token';
   }
 
   function githubPrivateHint(hasMore) {
@@ -813,6 +849,7 @@
   }
 
   async function loadGithub() {
+    closeGithubDialog();
     const requestId = ++state.ghRequestId;
     refreshProxyState();
     state.ghPage = 0;
@@ -862,10 +899,20 @@
 
   function renderGithub() {
     $('#ghList').innerHTML = state.ghRepos.map((repo) => {
-      const releases = state.ghReleaseCache[repo.fullName];
-      const detail = releases === undefined ? '' : releases.length === 0
-        ? '<div class="gh-release gh-status">暂无 Release</div>'
-        : releases.map((release) => `<div class="gh-release">
+      return `<article class="gh-repo">
+        <div class="gh-repo-head"><span class="gh-repo-title" title="${escapeHtml(repo.fullName)}">${escapeHtml(repo.fullName)}</span>
+          ${repo.private ? '<span class="gh-visibility">私有</span>' : ''}</div>
+        <p class="gh-description">${escapeHtml(repo.description || '')}</p>
+        <div class="gh-repo-foot"><time>${repo.pushedAt ? `更新 ${escapeHtml(formatDate(repo.pushedAt))}` : ''}</time>
+          <button class="action ghost" type="button" data-gh-repo="${escapeHtml(repo.fullName)}" aria-label="查看 ${escapeHtml(repo.fullName)} 的 Release">查看 Release</button></div>
+      </article>`;
+    }).join('');
+  }
+
+  function renderGithubReleases(repo, releases) {
+    $('#ghDialogContent').innerHTML = releases.length === 0
+      ? '<div class="gh-status">暂无 Release</div>'
+      : releases.map((release) => `<div class="gh-release">
           <div class="gh-tag"><b>${escapeHtml(release.tag)}</b> · ${formatDate(release.publishedAt)}${release.prerelease ? ' · 预发布' : ''}</div>
           ${(release.assets || []).map((asset) => {
             const url = asset.url || `/store/api/github/asset?${new URLSearchParams({ account: state.ghUser, repo: repo.fullName, id: String(asset.id) })}`;
@@ -874,12 +921,43 @@
               <button class="action primary" type="button" data-gh-url="${escapeHtml(url)}">下载</button></div>`;
           }).join('') || '<div class="gh-status">该版本没有附件</div>'}
         </div>`).join('');
-      return `<div class="gh-repo">
-        <div class="gh-repo-head"><button class="action" type="button" data-gh-repo="${escapeHtml(repo.fullName)}" title="加载 Release">${escapeHtml(repo.fullName)}</button>
-          ${repo.private ? '<span>私有</span>' : ''}${repo.description ? `<span>${escapeHtml(repo.description)}</span>` : ''}</div>
-        ${detail}</div>`;
-    }).join('');
   }
+
+  function closeGithubDialog() {
+    state.ghDialogRequestId = (state.ghDialogRequestId || 0) + 1;
+    const dialog = $('#ghDialog');
+    if (dialog?.open) dialog.close();
+  }
+
+  async function openGithubDialog(repo, opener) {
+    const dialog = $('#ghDialog');
+    const requestId = ++state.ghDialogRequestId;
+    const account = state.ghUser;
+    state.ghDialogOpener = opener;
+    $('#ghDialogTitle').textContent = repo;
+    $('#ghDialogContent').innerHTML = '<div class="gh-status">正在加载 Release…</div>';
+    if (!dialog.open) dialog.showModal();
+    if (state.ghReleaseCache[repo] !== undefined) {
+      renderGithubReleases({ fullName: repo }, state.ghReleaseCache[repo]);
+      return;
+    }
+    try {
+      const data = await githubApi(`releases?${new URLSearchParams({ account, repo })}`);
+      if (requestId !== state.ghDialogRequestId || !dialog.open || account !== state.ghUser) return;
+      state.ghReleaseCache[repo] = data.releases || [];
+      renderGithubReleases({ fullName: repo }, state.ghReleaseCache[repo]);
+    } catch (error) {
+      if (requestId === state.ghDialogRequestId && dialog.open && account === state.ghUser)
+        $('#ghDialogContent').textContent = `加载 Release 失败：${error.message}`;
+    }
+  }
+
+  $('#ghDialog').addEventListener('close', () => {
+    if ($('#ghDialog').open) return;
+    state.ghDialogRequestId = (state.ghDialogRequestId || 0) + 1;
+    state.ghDialogOpener?.focus();
+    state.ghDialogOpener = null;
+  });
 
   function renderCrumb() {
     const crumb = $('#crumb');
@@ -1099,20 +1177,11 @@
 
     const ghRepo = target.closest('[data-gh-repo]');
     if (ghRepo) {
-      const repo = ghRepo.dataset.ghRepo;
-      const requestId = state.ghRequestId;
-      if (state.ghReleaseCache[repo] === undefined) {
-        ghRepo.disabled = true;
-        try {
-          const data = await githubApi(`releases?${new URLSearchParams({ account: state.ghUser, repo })}`);
-          if (requestId !== state.ghRequestId) return;
-          state.ghReleaseCache[repo] = data.releases || [];
-          renderGithub();
-        } catch (error) { if (requestId === state.ghRequestId) $('#ghStatus').textContent = `加载 Release 失败：${error.message}`; }
-        finally { ghRepo.disabled = false; }
-      }
+      await openGithubDialog(ghRepo.dataset.ghRepo, ghRepo);
       return;
     }
+
+    if (target.closest('[data-gh-close]')) { closeGithubDialog(); return; }
 
     const ghDownload = target.closest('[data-gh-url]');
     if (ghDownload) {
@@ -1256,11 +1325,14 @@
   $('#ghAccounts').addEventListener('change', async (event) => {
     const login = event.target.value;
     if (!login) return;
+    closeGithubDialog();
     $('#ghUser').value = login;
     state.ghUser = login;
+    $('#ghTokenState').textContent = state.ghAccounts.find((entry) => entry.login === login)?.hasToken ? 'Token 已保存' : '未配置 Token';
     localStorage.setItem('gh:user', login);
     await loadGithub();
   });
+  $('#ghRefresh').addEventListener('click', () => loadGithub());
   $('#ghProxyMode').value = state.ghMode;
   $('#ghProxyCustom').value = state.ghCustom;
   $('#ghCustomWrap').hidden = state.ghMode !== 'custom';
@@ -1286,6 +1358,7 @@
   $('#ghSave').addEventListener('click', async () => {
     const user = $('#ghUser').value.trim();
     if (!user) { toast('请填写 GitHub 账号'); return; }
+    closeGithubDialog();
     state.ghUser = user;
     state.ghMode = $('#ghProxyMode').value;
     state.ghCustom = $('#ghProxyCustom').value.trim();
@@ -1316,6 +1389,7 @@
   $('#ghDelete').addEventListener('click', async () => {
     const login = $('#ghUser').value.trim();
     if (!login) return;
+    closeGithubDialog();
     state.ghRequestId += 1;
     state.ghPage = 0;
     state.ghReleaseCache = {};

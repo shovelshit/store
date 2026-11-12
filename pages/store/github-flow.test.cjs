@@ -23,7 +23,9 @@ function harness() {
     '#ghUser': { value: 'bob' },
     '#ghAccounts': { addEventListener(_type, handler) { this.change = handler; } },
     '#ghStatus': { textContent: '' },
+    '#ghTokenState': { textContent: '' },
     '#ghList': { innerHTML: '' },
+    '#ghRefresh': { addEventListener() {} },
     '#ghMore': { hidden: false, disabled: false, addEventListener(_type, handler) { this.click = handler; } }
   };
   const state = {
@@ -37,6 +39,7 @@ function harness() {
     localStorage: { setItem(key, value) { this[key] = value; } },
     refreshProxyState() { proxyRefreshes++; },
     renderGithub() { renders++; },
+    closeGithubDialog() {},
     githubApi(url) {
       calls.push(url);
       if (url.includes('page=1')) return first;
