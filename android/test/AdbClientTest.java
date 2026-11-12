@@ -100,11 +100,15 @@ public final class AdbClientTest {
         handshake(in, out);
         shellExchange(in, out, exit);
     }
-    static void shellExchange(InputStream in, OutputStream out, int exit) throws Exception {
+    static Packet shellExchange(InputStream in, OutputStream out, int exit) throws Exception {
+        return shellExchange(in, out, exit, null);
+    }
+    static Packet shellExchange(InputStream in, OutputStream out, int exit, Packet stale) throws Exception {
         Packet open = receive(in);
         check(open.cmd == OPEN && new String(open.payload, StandardCharsets.UTF_8).startsWith("shell:"), "shell OPEN");
         int id = open.arg0;
         send(out, OKAY, 7, id, "");
+        if (stale != null) send(out, CLSE, 7, stale.arg0, "");
         String command = new String(open.payload, StandardCharsets.UTF_8);
         int marker = command.indexOf("__ADB_EXIT_");
         check(marker >= 0, "exit marker command");
@@ -113,8 +117,7 @@ public final class AdbClientTest {
         send(out, WRTE, 7, id, "uid=2000(shell)\n\n" + token + ":" + exit + "\n");
         check(receive(in).cmd == OKAY, "ack shell data");
         send(out, CLSE, 7, id, "");
-        Packet reciprocal = receive(in);
-        check(reciprocal.cmd == CLSE && reciprocal.arg0 == id && reciprocal.arg1 == 7, "shell reciprocal CLOSE");
+        return open;
     }
     public static void main(String[] args) throws Exception {
         KeyPair identity = key();
@@ -154,13 +157,26 @@ public final class AdbClientTest {
         });
         fixture((in, out) -> {
             handshake(in, out);
-            shellExchange(in, out, 0);
-            shellExchange(in, out, 0);
+            Packet first = shellExchange(in, out, 0);
+            send(out, CLSE, 7, first.arg0, ""); // Actual adbd repeats this close before the next stream opens.
+            shellExchange(in, out, 0, first);
         }, (in, out) -> {
             try (AdbClient client = new AdbClient(identity)) {
                 client.connect("127.0.0.1", port(out), () -> {});
                 check(client.shell("id", 2000).exitCode == 0, "first shell");
                 check(client.shell("id", 2000).output.equals("uid=2000(shell)\n"), "second shell on same client");
+            }
+        });
+        fixture((in, out) -> {
+            handshake(in, out);
+            Packet first = shellExchange(in, out, 0);
+            receive(in); // Second OPEN.
+            send(out, CLSE, 99, first.arg0, ""); // Same local ID but unknown peer ID is not stale.
+        }, (in, out) -> {
+            try (AdbClient client = new AdbClient(identity)) {
+                client.connect("127.0.0.1", port(out), () -> {});
+                client.shell("id", 2000);
+                fails(() -> client.shell("id", 2000), "ID mismatch");
             }
         });
         fixture((in, out) -> {

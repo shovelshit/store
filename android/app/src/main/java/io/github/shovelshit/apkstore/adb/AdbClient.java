@@ -12,6 +12,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.SecureRandom;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.regex.Matcher;
@@ -39,6 +41,11 @@ public final class AdbClient implements AutoCloseable {
     private int maxData = 4096, nextId = 1, peerVersion = VERSION;
     private long deadline;
     private volatile long operationEpoch;
+    private final Map<Integer, Integer> completedStreams = new LinkedHashMap<Integer, Integer>() {
+        @Override protected boolean removeEldestEntry(Map.Entry<Integer, Integer> entry) {
+            return size() > 32;
+        }
+    };
 
     private static final class Packet {
         final int command, local, remote;
@@ -112,7 +119,7 @@ public final class AdbClient implements AutoCloseable {
             for (;;) {
                 Packet p = receiveStream(stream);
                 if (p.command == CLSE) {
-                    send(CLSE, stream.local, stream.remote, new byte[0]);
+                    completedStreams.put(stream.local, stream.remote);
                     String content = new String(result.toByteArray(), StandardCharsets.UTF_8);
                     Matcher match = Pattern.compile("(?s)\\n" + Pattern.quote(marker) + ":(-?\\d+)\\r?\\n$").matcher(content);
                     if (!match.find()) throw new IOException("ADB shell exit marker missing");
@@ -174,6 +181,7 @@ public final class AdbClient implements AutoCloseable {
             Packet close = receiveStream(stream);
             if (close.command != CLSE || close.body.length != 0)
                 throw new IOException("ADB sync stream close missing");
+            completedStreams.put(stream.local, stream.remote);
         } catch (IOException e) { close(); throw timedFailure(e, "ADB push"); }
         finally { watchdog.cancel(); }
     }
@@ -225,16 +233,28 @@ public final class AdbClient implements AutoCloseable {
         if (target.length > maxData) throw new IOException("ADB service command exceeds negotiated maxdata");
         int local = nextId++;
         send(OPEN, local, 0, target);
-        Packet p = receive();
+        Packet p = receiveCurrent();
         if (p.command == CLSE && p.remote == local) throw new IOException("ADB service rejected: " + destination);
-        if (p.command != OKAY || p.remote != local || p.local == 0) throw new IOException("ADB stream open ID mismatch");
+        if (p.command != OKAY || p.remote != local || p.local == 0)
+            throw new IOException("ADB stream open ID mismatch: command=" + Integer.toHexString(p.command)
+                + " peer=" + p.local + " local=" + p.remote + " expectedLocal=" + local);
         return new Stream(local, p.local);
     }
 
     private Packet receiveStream(Stream s) throws IOException {
-        Packet p = receive();
+        Packet p = receiveCurrent();
         if (p.remote != s.local || p.local != s.remote) throw new IOException("ADB stream ID mismatch");
         return p;
+    }
+
+    private Packet receiveCurrent() throws IOException {
+        for (int skipped = 0; skipped <= 32; skipped++) {
+            Packet p = receive();
+            if (p.command == CLSE && p.body.length == 0 && completedStreams.containsKey(p.remote)
+                && completedStreams.get(p.remote) == p.local) continue;
+            return p;
+        }
+        throw new IOException("Too many delayed ADB stream closes");
     }
 
     private void ready() throws IOException {
