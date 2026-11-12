@@ -521,6 +521,8 @@
     ghPage: 0,
     ghReleaseCache: {},
     ghRequestId: 0,
+    ghUpstreamPrivateCount: 0,
+    ghClassicRepoScopeMissing: false,
   };
 
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -797,6 +799,19 @@
     $('#ghAccounts').value = state.ghAccounts.find((entry) => entry.login.toLowerCase() === state.ghUser.toLowerCase())?.login || '';
   }
 
+  function githubPrivateHint(hasMore) {
+    const savedToken = state.ghAccounts.some((entry) => entry.login.toLowerCase() === state.ghUser.toLowerCase() && entry.hasToken);
+    if (!savedToken || hasMore || state.ghRepos.some((repo) => repo.private)) return '';
+    if (state.ghClassicRepoScopeMissing) return ' · Token 缺少 repo 权限，私有仓库不可见';
+    if (state.ghUpstreamPrivateCount > 0) return ' · GitHub 返回的私有仓库不属于此账号或已归档';
+    return ' · Token 已保存，但 GitHub 未返回私有仓库；请检查 Token 授权的仓库范围';
+  }
+
+  function addGithubDiagnostics(data) {
+    state.ghUpstreamPrivateCount += data.diagnostics?.upstreamPrivateCount || 0;
+    state.ghClassicRepoScopeMissing ||= data.diagnostics?.classicRepoScopeMissing === true;
+  }
+
   async function loadGithub() {
     const requestId = ++state.ghRequestId;
     refreshProxyState();
@@ -804,6 +819,8 @@
     state.ghLoaded = false;
     state.ghRepos = [];
     state.ghReleaseCache = {};
+    state.ghUpstreamPrivateCount = 0;
+    state.ghClassicRepoScopeMissing = false;
     $('#ghMore').hidden = true;
     $('#ghMore').disabled = true;
     const status = $('#ghStatus');
@@ -813,12 +830,13 @@
       const data = await githubApi(`repos?${new URLSearchParams({ account: state.ghUser, page: '1' })}`);
       if (requestId !== state.ghRequestId) return;
       state.ghRepos = data.repos || [];
+      addGithubDiagnostics(data);
       state.ghPage = 1;
       $('#ghMore').hidden = !data.hasMore;
       $('#ghMore').disabled = !data.hasMore;
       state.ghReleaseCache = {};
       state.ghLoaded = true;
-      status.textContent = `${state.ghUser} · ${state.ghRepos.length} 个仓库`;
+      status.textContent = `${state.ghUser} · ${state.ghRepos.length} 个仓库${githubPrivateHint(data.hasMore)}`;
       renderGithub();
     } catch (error) { if (requestId === state.ghRequestId) status.textContent = `加载失败：${error.message}`; }
   }
@@ -833,9 +851,10 @@
       const data = await githubApi(`repos?${new URLSearchParams({ account: state.ghUser, page: String(page) })}`);
       if (requestId !== state.ghRequestId) return;
       state.ghRepos.push(...data.repos);
+      addGithubDiagnostics(data);
       state.ghPage = page;
       button.hidden = !data.hasMore;
-      $('#ghStatus').textContent = `${state.ghUser} · 已加载 ${state.ghRepos.length} 个仓库`;
+      $('#ghStatus').textContent = `${state.ghUser} · 已加载 ${state.ghRepos.length} 个仓库${githubPrivateHint(data.hasMore)}`;
       renderGithub();
     } catch (error) { if (requestId === state.ghRequestId) $('#ghStatus').textContent = `加载仓库失败：${error.message}`; }
     finally { if (requestId === state.ghRequestId) button.disabled = button.hidden; }
@@ -1234,8 +1253,13 @@
 
   // ===== 启动 =====
   $('#ghUser').value = state.ghUser;
-  $('#ghAccounts').addEventListener('change', (event) => {
-    if (event.target.value) $('#ghUser').value = event.target.value;
+  $('#ghAccounts').addEventListener('change', async (event) => {
+    const login = event.target.value;
+    if (!login) return;
+    $('#ghUser').value = login;
+    state.ghUser = login;
+    localStorage.setItem('gh:user', login);
+    await loadGithub();
   });
   $('#ghProxyMode').value = state.ghMode;
   $('#ghProxyCustom').value = state.ghCustom;
