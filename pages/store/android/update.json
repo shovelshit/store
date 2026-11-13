@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "packageName": "io.github.shovelshit.apkstore",
+  "versionCode": 6,
+  "versionName": "1.4.0",
+  "minSdk": 24,
+  "channel": "development",
+  "url": "https://gh-proxy.com/https://github.com/shovelshit/store/releases/download/android-v1.4.0-dev/apk-store-1.4.0.apk",
+  "size": 1327756,
+  "sha256": "de7d6d7b9f425e636456f1b82c6225e4b1bd5188c967eb722d383c95487e4457",
+  "certificateSha256": "a724a2980a46a41e296353e2553256f4dceeb645810f25a41e2ecb3873558a97",
+  "notes": "Android 1.4.0 开发版（versionCode 6）\n\n- ADB 页面增加固定返回栏和连接、应用、安装三个页签，保留连接、搜索和文件选择；优化横屏布局与权限展示。\n- GitHub 下载保留真实文件名和类型，显示系统下载状态；仅对已校验的有效 APK 提供普通安装和 ADB 安装。\n- 增加原生更新入口和启动后的后台检查。下载后校验大小、SHA-256、包名、版本和签名，再交由 Android 系统确认安装；支持完成状态恢复。\n\n1.3.0 尚无更新入口，首次需手动覆盖安装本版。此开发版与已发布的 1.3.0 开发版使用相同签名；安装保留系统确认，不自动卸载或清除数据。Android 最低版本 7.0（API24），已在 Android9（API28）验证同签名升级和主要流程。"
+}
