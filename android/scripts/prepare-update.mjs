@@ -31,19 +31,72 @@ function toolOutput(sdk, name, args, env) {
 }
 
 function manifestMetadata(xml) {
-  const attr = (name) => xml.match(new RegExp(`\\b${name}="([^"]+)"`))?.[1];
+  const source = xml.replace(/<!--[\s\S]*?-->/g, "").replace(/^\s*<\?xml\b[^?]*\?>/, "").trimStart();
+  if (!/^<manifest(?=[\s/>])/.test(source)) throw new Error("Manifest package or version invalid");
+  let quote = "", end = -1;
+  for (let i = "<manifest".length; i < source.length; i += 1) {
+    const character = source[i];
+    if (quote) {
+      if (character === quote) quote = "";
+    } else if (character === "'" || character === '"') {
+      quote = character;
+    } else if (character === ">") {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) throw new Error("Manifest package or version invalid");
+  const attributes = new Map();
+  const content = source.slice("<manifest".length, end).replace(/\/\s*$/, "");
+  const token = /\s+([A-Za-z_:][\w.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/y;
+  let offset = 0;
+  while (offset < content.trimEnd().length) {
+    token.lastIndex = offset;
+    const match = token.exec(content);
+    if (!match || attributes.has(match[1])) throw new Error("Manifest package or version invalid");
+    attributes.set(match[1], match[2] ?? match[3]);
+    offset = token.lastIndex;
+  }
+  const attr = name => attributes.get(name);
   const packageName = attr("package"), versionName = attr("android:versionName");
   const versionCode = Number(attr("android:versionCode"));
-  if (packageName !== PACKAGE || !/^\d+(?:\.\d+)+$/.test(versionName || "") || !Number.isSafeInteger(versionCode) || versionCode <= 0)
+  if (attr("xmlns:android") !== "http://schemas.android.com/apk/res/android" || packageName !== PACKAGE
+      || !/^\d+(?:\.\d+)+$/.test(versionName || "") || !Number.isSafeInteger(versionCode) || versionCode <= 0)
     throw new Error("Manifest package or version invalid");
   return { packageName, versionCode, versionName };
 }
 
+function validReleaseUrl(value, base) {
+  const parsed = new URL(value, base);
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.hash)
+    throw new Error("Release URL and redirects must be HTTPS without credentials or fragment");
+  return parsed;
+}
+
+async function fetchVerifiedAsset(url, fetchAsset) {
+  let current = validReleaseUrl(url);
+  const visited = new Set();
+  for (let hops = 0; hops <= 5; hops += 1) {
+    if (visited.has(current.href)) throw new Error("Release redirect loop");
+    visited.add(current.href);
+    const response = await fetchAsset(current.href, { redirect: "manual", credentials: "omit" });
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      if (hops === 5) throw new Error("Release redirect limit exceeded");
+      const location = response.headers.get("location");
+      if (!location) throw new Error("Release redirect missing location");
+      current = validReleaseUrl(location, current);
+      await response.body?.cancel();
+      continue;
+    }
+    if (!response.ok) throw new Error(`Release asset unavailable: HTTP ${response.status}`);
+    return Buffer.from(await response.arrayBuffer());
+  }
+  throw new Error("Release redirect limit exceeded");
+}
+
 export async function prepareUpdate({ apk, manifest, sdk, url, channel, notes, output, fetchAsset = fetch, env = process.env }) {
   if (!apk || !manifest || !sdk || !url || !notes || !output) throw new Error("APK, Manifest, SDK, URL, notes and output are required");
-  const releaseUrl = new URL(url);
-  if (releaseUrl.protocol !== "https:" || releaseUrl.username || releaseUrl.password || releaseUrl.hash)
-    throw new Error("Release URL must be HTTPS without credentials or fragment");
+  const releaseUrl = validReleaseUrl(url);
   if (channel !== "development") throw new Error("Unsupported release channel");
   const expected = manifestMetadata(await readFile(manifest, "utf8"));
   if (basename(releaseUrl.pathname) !== `apk-store-${expected.versionName}.apk`) throw new Error("Release asset name/version mismatch");
@@ -62,9 +115,7 @@ export async function prepareUpdate({ apk, manifest, sdk, url, channel, notes, o
   const local = await readFile(apk);
   const size = (await stat(apk)).size;
   const sha256 = createHash("sha256").update(local).digest("hex");
-  const response = await fetchAsset(url, { redirect: "error" });
-  if (!response.ok) throw new Error(`Release asset unavailable: HTTP ${response.status}`);
-  const remote = Buffer.from(await response.arrayBuffer());
+  const remote = await fetchVerifiedAsset(url, fetchAsset);
   if (remote.length !== size || createHash("sha256").update(remote).digest("hex") !== sha256)
     throw new Error("Downloaded release asset differs from local APK");
   const release = {
