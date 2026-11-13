@@ -113,8 +113,7 @@ final class UpdateCoordinator {
                             done -> publish(new State(Phase.DOWNLOADING,release,"正在下载",done)),false);
                     UpdateArchive.verify(app,part,release);
                     File completed = completed(release);
-                    java.nio.file.Files.move(part.toPath(),completed.toPath(),java.nio.file.StandardCopyOption.ATOMIC_MOVE,
-                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    UpdatePromotion.promote(part,completed);
                 });
                 if (failure != null) throw failure;
                 JSONObject data = serialize(release);

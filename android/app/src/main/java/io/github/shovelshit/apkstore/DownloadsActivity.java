@@ -196,7 +196,7 @@ public class DownloadsActivity extends Activity {
 
         boolean apkCandidate = success && DownloadPolicy.isInstallable(name, mime);
         if (apkCandidate) {
-            archive = archiveVerifier.result(id, manager.getUriForDownloadedFile(id), this::render);
+            archive = archiveVerifier.result(id, manager.getUriForDownloadedFile(id));
             if (archive == ApkArchiveVerifier.Result.VERIFYING) status = "已下载 · 正在验证安装包";
             else if (archive == ApkArchiveVerifier.Result.INVALID) status = "已下载 · 不是有效安装包";
         }

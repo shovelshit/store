@@ -50,12 +50,93 @@ if (process.argv[1].endsWith('aapt2') && process.argv[2] === 'dump') {
         assert.equal(init.credentials, 'omit');
         return fetch(`http://127.0.0.1:${server.address().port}${new URL(requestedUrl).pathname}`, init);
       } };
-    await fn({ options, output, apk, manifest, server });
+    await fn({ options, output, apk, manifest, notes, sdk, server });
   } finally {
     if (server.listening) await new Promise(resolve => server.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+
+test('creates a missing nested index parent only after verification', async () => fixture(async ({ options, output }) => {
+  const nested = path.join(path.dirname(output), 'missing', 'android', 'update.json');
+  options.output = nested;
+  await (await import('../scripts/prepare-update.mjs')).prepareUpdate(options);
+  assert.equal(JSON.parse(fs.readFileSync(nested, 'utf8')).versionCode, 6);
+}));
+
+test('failed verification leaves a missing index parent absent', async () => fixture(async ({ options, output, server }) => {
+  const nested = path.join(path.dirname(output), 'missing', 'android', 'update.json');
+  options.output = nested;
+  server.assetBytes = Buffer.from('different');
+  await assert.rejects((await import('../scripts/prepare-update.mjs')).prepareUpdate(options));
+  assert.equal(fs.existsSync(path.dirname(nested)), false);
+}));
+
+test('rejects empty notes without replacing an index', async () => fixture(async ({ options, output, notes }) => {
+  fs.writeFileSync(notes, '  \n\t');
+  await assert.rejects((await import('../scripts/prepare-update.mjs')).prepareUpdate(options), /notes/i);
+  assert.equal(fs.readFileSync(output, 'utf8'), 'previous index');
+}));
+
+test('rejects oversized UTF-8 index without replacing an index', async () => fixture(async ({ options, output, notes }) => {
+  fs.writeFileSync(notes, '中'.repeat(22000));
+  await assert.rejects((await import('../scripts/prepare-update.mjs')).prepareUpdate(options), /index|索引/i);
+  assert.equal(fs.readFileSync(output, 'utf8'), 'previous index');
+}));
+
+test('accepts an index at the exact 65536-byte UTF-8 boundary', async () => fixture(async ({ options, output, notes }) => {
+  const emptyNotes = { schema: 1, packageName: 'io.github.shovelshit.apkstore', versionCode: 6,
+    versionName: '1.4.0', minSdk: 24, channel: 'development', url: RELEASE_URL,
+    size: payload.length, sha256: createHash('sha256').update(payload).digest('hex'),
+    certificateSha256: CERT, notes: '' };
+  const overhead = Buffer.byteLength(JSON.stringify(emptyNotes, null, 2) + '\n');
+  fs.writeFileSync(notes, 'A'.repeat(65536 - overhead));
+  await (await import('../scripts/prepare-update.mjs')).prepareUpdate(options);
+  assert.equal(fs.statSync(output).size, 65536);
+  fs.writeFileSync(notes, 'A'.repeat(65537 - overhead));
+  await assert.rejects((await import('../scripts/prepare-update.mjs')).prepareUpdate(options), /index|索引/i);
+  assert.equal(fs.statSync(output).size, 65536);
+}));
+
+test('rejects empty APK size before publishing', async () => fixture(async ({ options, output, apk }) => {
+  const prepare = (await import('../scripts/prepare-update.mjs')).prepareUpdate;
+  fs.truncateSync(apk, 0);
+  await assert.rejects(prepare(options), /size|大小/i);
+  assert.equal(fs.readFileSync(output, 'utf8'), 'previous index');
+}));
+
+test('rejects an APK larger than the consumer limit before reading or publishing it', async () => fixture(async ({ options, output, apk }) => {
+  fs.truncateSync(apk, 2 ** 30 + 1);
+  await assert.rejects((await import('../scripts/prepare-update.mjs')).prepareUpdate(options), /size/i);
+  assert.equal(fs.readFileSync(output, 'utf8'), 'previous index');
+}));
+
+test('rejects a versionCode outside Android integer range', async () => fixture(async ({ options, output, manifest }) => {
+  fs.writeFileSync(manifest, fs.readFileSync(manifest, 'utf8').replace('versionCode="6"', 'versionCode="2147483648"'));
+  await assert.rejects((await import('../scripts/prepare-update.mjs')).prepareUpdate(options), /Manifest package or version/i);
+  assert.equal(fs.readFileSync(output, 'utf8'), 'previous index');
+}));
+
+test('CLI rejects missing and malformed options before touching tools or files', () => {
+  const script = path.resolve(__dirname, '../scripts/prepare-update.mjs');
+  for (const args of [[], ['--apk', '--manifest', 'file'], ['--unknown', 'x'], ['--apk', 'file', '--apk', 'other']]) {
+    const result = require('node:child_process').spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, /option|required|unknown|duplicate|参数|缺少|未知|重复/i);
+  }
+});
+
+test('CLI accepts SDK environment fallback when --sdk is absent', () => fixture(async ({ options, sdk }) => {
+  const script = path.resolve(__dirname, '../scripts/prepare-update.mjs');
+  const args = ['--apk', options.apk, '--manifest', options.manifest, '--url', options.url,
+    '--channel', options.channel, '--notes', options.notes, '--output', options.output];
+  const env = { ...process.env, ANDROID_HOME: sdk };
+  delete env.ANDROID_SDK_ROOT;
+  const result = require('node:child_process').spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', env });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /fetch failed|Release asset unavailable|network/i);
+  assert.doesNotMatch(result.stderr, /SDK option|build-tools unavailable/i);
+}));
 
 test('publishes actual APK fields after independently fetching matching release bytes', async () => fixture(async ({ options, output }) => {
   await (await import('../scripts/prepare-update.mjs')).prepareUpdate(options);

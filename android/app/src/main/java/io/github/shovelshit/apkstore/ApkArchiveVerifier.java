@@ -35,7 +35,7 @@ final class ApkArchiveVerifier {
         return instance;
     }
 
-    Result result(long id, Uri uri, Runnable onVerified) {
+    Result result(long id, Uri uri) {
         Result previous = results.get(id);
         if (previous != null) return previous;
         results.put(id, Result.VERIFYING);
@@ -47,7 +47,7 @@ final class ApkArchiveVerifier {
                 } catch (Exception ignored) { /* unreadable or invalid archive */ }
             }
             final Result finalResult = valid ? Result.VALID : Result.INVALID;
-            main.post(() -> { results.put(id, finalResult); onVerified.run(); });
+            main.post(() -> results.put(id, finalResult));
         });
         return Result.VERIFYING;
     }

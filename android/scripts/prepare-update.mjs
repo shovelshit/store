@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -61,7 +61,7 @@ function manifestMetadata(xml) {
   const packageName = attr("package"), versionName = attr("android:versionName");
   const versionCode = Number(attr("android:versionCode"));
   if (attr("xmlns:android") !== "http://schemas.android.com/apk/res/android" || packageName !== PACKAGE
-      || !/^\d+(?:\.\d+)+$/.test(versionName || "") || !Number.isSafeInteger(versionCode) || versionCode <= 0)
+      || !/^\d+(?:\.\d+)+$/.test(versionName || "") || !Number.isInteger(versionCode) || versionCode <= 0 || versionCode > 2147483647)
     throw new Error("Manifest package or version invalid");
   return { packageName, versionCode, versionName };
 }
@@ -106,14 +106,15 @@ export async function prepareUpdate({ apk, manifest, sdk, url, channel, notes, o
   if (!pkg || !minimum || pkg[1] !== expected.packageName || Number(pkg[2]) !== expected.versionCode || pkg[3] !== expected.versionName)
     throw new Error("APK package/version does not match Manifest");
   const minSdk = Number(minimum[1]);
-  if (!Number.isSafeInteger(minSdk) || minSdk < 1) throw new Error("Invalid APK minSdk");
+  if (!Number.isInteger(minSdk) || minSdk < 1 || minSdk > 2147483647) throw new Error("Invalid APK minSdk");
   const certificates = toolOutput(sdk, "apksigner", ["verify", "--print-certs", apk], env)
     .match(/Signer #\d+ certificate SHA-256 digest: ([a-fA-F0-9]{64})/g) || [];
   if (certificates.length !== 1 || certificates[0].split(": ")[1].toLowerCase() !== CERT)
     throw new Error("APK signer differs from installed certificate");
 
-  const local = await readFile(apk);
   const size = (await stat(apk)).size;
+  if (!Number.isSafeInteger(size) || size <= 0 || size > 2 ** 30) throw new Error("Invalid APK size");
+  const local = await readFile(apk);
   const sha256 = createHash("sha256").update(local).digest("hex");
   const remote = await fetchVerifiedAsset(url, fetchAsset);
   if (remote.length !== size || createHash("sha256").update(remote).digest("hex") !== sha256)
@@ -122,9 +123,15 @@ export async function prepareUpdate({ apk, manifest, sdk, url, channel, notes, o
     schema: 1, ...expected, minSdk, channel, url, size, sha256,
     certificateSha256: CERT, notes: (await readFile(notes, "utf8")).trim()
   };
+  if (!Number.isInteger(release.versionCode) || release.versionCode <= 0 || release.versionCode > 2147483647
+      || !Number.isInteger(release.minSdk) || release.minSdk <= 0 || release.minSdk > 2147483647
+      || !release.notes) throw new Error("Invalid release fields or notes");
+  const serialized = Buffer.from(JSON.stringify(release, null, 2) + "\n", "utf8");
+  if (serialized.length > 65536) throw new Error("Update index exceeds 65536 bytes");
   const temporary = join(dirname(output), `.${basename(output)}.${randomUUID()}.tmp`);
+  await mkdir(dirname(output), { recursive: true });
   try {
-    await writeFile(temporary, JSON.stringify(release, null, 2) + "\n", { flag: "wx" });
+    await writeFile(temporary, serialized, { flag: "wx" });
     await rename(temporary, output);
   } finally {
     await rm(temporary, { force: true });
@@ -132,17 +139,31 @@ export async function prepareUpdate({ apk, manifest, sdk, url, channel, notes, o
   return release;
 }
 
+function cliOptions(args, env) {
+  const known = new Set(["--apk", "--manifest", "--sdk", "--url", "--channel", "--notes", "--output"]);
+  const options = new Map();
+  for (let index = 0; index < args.length; index += 2) {
+    const name = args[index], value = args[index + 1];
+    if (!known.has(name)) throw new Error(`Unknown option: ${name}`);
+    if (options.has(name)) throw new Error(`Duplicate option: ${name}`);
+    if (!value || value.startsWith("--")) throw new Error(`Missing value for option: ${name}`);
+    options.set(name, value);
+  }
+  for (const name of ["--apk", "--manifest", "--url", "--channel", "--notes", "--output"])
+    if (!options.has(name)) throw new Error(`Required option missing: ${name}`);
+  const sdk = options.get("--sdk") || env.ANDROID_HOME || env.ANDROID_SDK_ROOT;
+  if (!sdk) throw new Error("Required SDK option or ANDROID_HOME/ANDROID_SDK_ROOT missing");
+  return { apk: options.get("--apk"), manifest: options.get("--manifest"), sdk,
+    url: options.get("--url"), channel: options.get("--channel"), notes: options.get("--notes"), output: options.get("--output") };
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
-  const value = name => args[args.indexOf(name) + 1];
-  if (args.includes("--help")) {
+  if (args.length === 1 && args[0] === "--help") {
     console.log("Usage: node android/scripts/prepare-update.mjs --apk FILE --manifest FILE --sdk DIR --url HTTPS_URL --channel development --notes FILE --output FILE");
   } else {
     try {
-      const release = await prepareUpdate({
-        apk: value("--apk"), manifest: value("--manifest"), sdk: value("--sdk") || process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT,
-        url: value("--url"), channel: value("--channel"), notes: value("--notes"), output: value("--output")
-      });
+      const release = await prepareUpdate(cliOptions(args, process.env));
       console.log(`Verified ${release.versionName}, ${release.size} bytes, SHA-256 ${release.sha256}`);
     } catch (error) {
       console.error(`Update index not published: ${error.message}`);

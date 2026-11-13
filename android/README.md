@@ -42,7 +42,7 @@ node --test pages/store/*.test.cjs
 
 ### 更新发布顺序
 
-首次安装需手动侧载 APK；之后 App 启动和返回前台时会自动检查
+首次安装需手动侧载 APK；之后 App 冷启动时会自动检查（一小时内不重复），返回前台不会自动检查
 `https://store.ltools.asia/android/update.json`，也可在应用更新页手动检查。
 索引只对 `development` 渠道开放，必须与已安装版本使用相同签名证书。
 先用保留的开发密钥构建并校验 APK，再创建 `android-v1.4.0-dev` 预发布并上传
