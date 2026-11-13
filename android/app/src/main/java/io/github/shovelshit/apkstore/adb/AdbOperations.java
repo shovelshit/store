@@ -13,6 +13,12 @@ import java.util.regex.Pattern;
 
 /** Fixed, validated Android package operations; no arbitrary shell input reaches the transport. */
 public final class AdbOperations {
+    public static final class CommandFailure extends IOException {
+        CommandFailure(String message) { super(message); }
+    }
+    public static final class VerificationFailure extends IOException {
+        VerificationFailure(String message) { super(message); }
+    }
     public interface CommandRunner { AdbClient.ShellResult run(String command) throws IOException; }
     public interface Uploader {
         void upload(InputStream source, long length, String remotePath, AdbClient.ProgressListener progress) throws IOException;
@@ -166,7 +172,7 @@ public final class AdbOperations {
         else shell("pm " + (grant ? "grant" : "revoke") + " --user 0 " + packageName + " " + permission);
         PermissionSnapshot after = readPermissions(packageName);
         State actual = after.find(permission).state;
-        if (actual != (grant ? State.GRANTED : State.DENIED)) throw new IOException("权限修改后未确认目标状态: " + actual);
+        if (actual != (grant ? State.GRANTED : State.DENIED)) throw new VerificationFailure("权限修改后未确认目标状态: " + actual);
         return after;
     }
 
@@ -210,7 +216,7 @@ public final class AdbOperations {
 
     private String shell(String command) throws IOException {
         AdbClient.ShellResult result = commands.run(command);
-        if (result.exitCode != 0) throw new IOException(command.split(" ")[0] + " 失败 (" + result.exitCode + "): " + result.output);
+        if (result.exitCode != 0) throw new CommandFailure(command.split(" ")[0] + " 失败 (" + result.exitCode + "): " + result.output);
         return result.output;
     }
 

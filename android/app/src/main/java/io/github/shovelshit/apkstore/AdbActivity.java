@@ -29,10 +29,12 @@ import android.widget.TextView;
 import io.github.shovelshit.apkstore.adb.AdbClient;
 import io.github.shovelshit.apkstore.adb.AdbIdentity;
 import io.github.shovelshit.apkstore.adb.AdbOperations;
+import io.github.shovelshit.apkstore.adb.AdbBatchGrant;
 import java.io.File;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -60,11 +62,14 @@ public final class AdbActivity extends Activity {
     private List<AdbOperations.Application> applicationList = new ArrayList<>();
     private List<AdbOperations.Application> visibleApplications = new ArrayList<>();
     private String selectedPackage;
+    private AdbOperations.PermissionSnapshot displayedPermissions;
+    private AdbBatchGrantUi batchUi;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         controller = new AdbController(main::post, () -> AdbController.forClient(
                 new AdbClient(AdbIdentity.loadOrCreate(new File(getFilesDir(), "adb")))));
+        batchUi = new AdbBatchGrantUi(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.parseColor("#F4F6FB"));
@@ -254,6 +259,7 @@ public final class AdbActivity extends Activity {
     }
     private void disconnect(boolean cancelWork) {
         if (controller == null) return;
+        if (batchUi != null) batchUi.disconnect();
         boolean inFlight = busy;
         controller.disconnect(); connected = false; busy = false;
         boolean cancelledInstall = installing;
@@ -265,7 +271,7 @@ public final class AdbActivity extends Activity {
         if (cancelledInstall) { installProgress.cancelled(); showInstallProgress(); }
         else if (cancelWork && inFlight) showStatus("本机操作已取消");
         else status.setVisibility(View.GONE);
-        applicationList.clear(); selectedPackage = null;
+        applicationList.clear(); selectedPackage = null; displayedPermissions = null;
         if (navigation.permissionPackage() != null) {
             navigation.showApplications(search.getText().toString(), appList.getFirstVisiblePosition());
             renderPane();
@@ -281,6 +287,14 @@ public final class AdbActivity extends Activity {
         install.setEnabled(connected && !busy && source != null);
         cancel.setEnabled(busy);
         choose.setEnabled(!busy);
+        if (deviceTab != null) {
+            deviceTab.setEnabled(!busy && navigation.tab() != AdbNavigation.Tab.DEVICE);
+            appsTab.setEnabled(!busy && navigation.tab() != AdbNavigation.Tab.APPS);
+            installTab.setEnabled(!busy && navigation.tab() != AdbNavigation.Tab.INSTALL);
+            host.setEnabled(!busy); port.setEnabled(!busy);
+            search.setEnabled(!busy); system.setEnabled(!busy);
+            appList.setEnabled(!busy);
+        }
     }
     private void loadApps() {
         if (!connected || busy) return;
@@ -313,8 +327,15 @@ public final class AdbActivity extends Activity {
     private AdbController.Callback<AdbOperations.PermissionSnapshot> permissionCallback() {
         return new AdbController.Callback<AdbOperations.PermissionSnapshot>() {
             public void success(AdbOperations.PermissionSnapshot snapshot) {
+                if (isFinishing() || isDestroyed() || !snapshot.packageName.equals(selectedPackage)) return;
                 busy = false; updateButtons(); status.setVisibility(View.GONE);
+                displayedPermissions = snapshot;
                 permissions.removeAllViews(); permissions.addView(text(snapshot.packageName, 16));
+                permissions.addView(button("一键授权", () -> {
+                    if (!connected || busy || !snapshot.packageName.equals(selectedPackage)) return;
+                    batchUi.confirm(displayedPermissions, host.getText().toString().trim() + ":"
+                            + port.getText().toString().trim(), AdbActivity.this::startBatchGrant);
+                }));
                 int shown = 0;
                 for (AdbOperations.Permission permission : AdbPresentation.orderedDeclared(snapshot.permissions)) {
                     shown++;
@@ -342,6 +363,46 @@ public final class AdbActivity extends Activity {
         if (!connected || busy || !pkg.equals(selectedPackage)) return;
         busy = true; updateButtons(); showStatus("修改并核对目标权限…");
         controller.submit(s -> new AdbOperations(cmd -> s.shell(cmd, 30000)).setPermission(pkg, permission, grant), permissionCallback());
+    }
+
+    private void startBatchGrant(String pkg, List<String> selected, AtomicBoolean stop) {
+        if (!connected || busy || !pkg.equals(selectedPackage)) { batchUi.disconnect(); return; }
+        busy = true; updateButtons(); showStatus("正在逐项授权并核对…");
+        controller.submitWithProgress((session, poster) -> AdbBatchGrant.run(
+                new AdbOperations(cmd -> session.shell(cmd, 30000)), pkg, selected,
+                stop::get, value -> poster.post(() -> {
+                    if (!isFinishing() && !isDestroyed() && pkg.equals(selectedPackage)) batchUi.progress(value);
+                })), new AdbController.Callback<AdbBatchGrant.Result>() {
+            public void success(AdbBatchGrant.Result result) {
+                if (isFinishing() || isDestroyed() || !pkg.equals(selectedPackage)) return;
+                busy = false; updateButtons(); status.setVisibility(View.GONE);
+                batchUi.finish(result, AdbActivity.this::previewBatchGrant);
+                if (result.snapshot != null) permissionCallback().success(result.snapshot);
+            }
+            public void failure(Exception error) {
+                if (isFinishing() || isDestroyed() || !pkg.equals(selectedPackage)) return;
+                busy = false; updateButtons(); showStatus("批量授权失败：" + error.getMessage());
+                batchUi.disconnect();
+            }
+        });
+    }
+
+    private void previewBatchGrant() {
+        if (!connected || busy || selectedPackage == null) return;
+        String pkg = selectedPackage;
+        busy = true; updateButtons(); showStatus("正在重新读取可授权权限…");
+        controller.submit(s -> new AdbOperations(cmd -> s.shell(cmd, 30000)).readPermissions(pkg),
+                new AdbController.Callback<AdbOperations.PermissionSnapshot>() {
+            public void success(AdbOperations.PermissionSnapshot snapshot) {
+                if (isFinishing() || isDestroyed() || !pkg.equals(selectedPackage)) return;
+                permissionCallback().success(snapshot);
+                batchUi.confirm(snapshot, host.getText().toString().trim() + ":"
+                        + port.getText().toString().trim(), AdbActivity.this::startBatchGrant);
+            }
+            public void failure(Exception error) {
+                busy = false; updateButtons(); showStatus("读取权限失败：" + error.getMessage());
+            }
+        });
     }
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
@@ -406,6 +467,7 @@ public final class AdbActivity extends Activity {
     }
     @Override protected void onDestroy() {
         sourceEpoch++;
+        if (batchUi != null) batchUi.close();
         controller.close(); fileWorker.shutdown();
         if (source != null) source.close();
         super.onDestroy();
