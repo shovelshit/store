@@ -27,10 +27,11 @@ public final class AdbNavigation {
     public void selectTab(Tab value) { tab = value; }
     public void openPermissions(String value) { tab = Tab.APPS; permissionPackage = value; }
     public Back back(boolean busy) {
+        if (busy) return Back.CONFIRM_EXIT;
         if (tab == Tab.APPS && permissionPackage != null) {
             permissionPackage = null;
             return Back.RETURN_TO_LIST;
         }
-        return busy ? Back.CONFIRM_EXIT : Back.EXIT;
+        return Back.EXIT;
     }
 }

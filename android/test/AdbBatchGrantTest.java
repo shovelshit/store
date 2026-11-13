@@ -79,9 +79,11 @@ public final class AdbBatchGrantTest {
         AdbBatchGrant.Result interrupted = lost.run(Arrays.asList(CAMERA, OVERLAY), new AtomicBoolean(), new ArrayList<>());
         yes(interrupted.interrupted); eq(interrupted.grantedCount(), 1); eq(mutations(lost), 1);
         yes(interrupted.reason.contains("connection lost"));
+        yes(interrupted.snapshot == null);
         Device unreadable = new Device(); unreadable.transportAfter = 5;
         AdbBatchGrant.Result uncertain = unreadable.run(Arrays.asList(CAMERA, OVERLAY), new AtomicBoolean(), new ArrayList<>());
         yes(uncertain.interrupted); eq(uncertain.grantedCount(), 0); eq(uncertain.pendingCount(), 2);
+        yes(uncertain.snapshot == null);
         eq(mutations(unreadable), 1);
         Device between = new Device(); AtomicBoolean stop = new AtomicBoolean();
         AdbBatchGrant.Result cancellation = AdbBatchGrant.run(new AdbOperations(between), PKG,

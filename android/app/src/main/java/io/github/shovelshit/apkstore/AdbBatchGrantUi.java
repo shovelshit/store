@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -18,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class AdbBatchGrantUi {
     interface Starter { void start(String packageName, List<String> selected, AtomicBoolean stop); }
     private final Activity activity;
-    private AlertDialog running;
+    private AlertDialog confirmation, running, reportDialog;
     private TextView detail;
     private AtomicBoolean stop;
     private AdbBatchGrant.Progress last;
@@ -31,7 +32,8 @@ final class AdbBatchGrantUi {
         for (AdbOperations.Permission permission : AdbPresentation.orderedDeclared(snapshot.permissions))
             if (permission.canGrant()) candidates.add(permission);
         if (candidates.isEmpty()) {
-            new AlertDialog.Builder(activity).setTitle("一键授权")
+            if (reportDialog != null) reportDialog.dismiss();
+            reportDialog = new AlertDialog.Builder(activity).setTitle("一键授权")
                     .setMessage("此应用目前没有可授权的权限。请刷新权限后重试。")
                     .setPositiveButton("关闭", null).show();
             return;
@@ -57,8 +59,10 @@ final class AdbBatchGrantUi {
         }
         ScrollView scroll = new ScrollView(activity);
         scroll.addView(choices);
+        if (confirmation != null) confirmation.dismiss();
         AlertDialog dialog = new AlertDialog.Builder(activity).setTitle("确认一键授权")
                 .setView(scroll).setNegativeButton("取消", null).setPositiveButton("开始", null).create();
+        confirmation = dialog;
         dialog.setOnShowListener(ignored -> dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener(v -> {
             List<String> selected = new ArrayList<>();
             for (int i = 0; i < boxes.size(); i++) if (boxes.get(i).isChecked()) selected.add(candidates.get(i).name);
@@ -67,6 +71,7 @@ final class AdbBatchGrantUi {
                 return;
             }
             dialog.dismiss();
+            confirmation = null;
             AtomicBoolean cancel = new AtomicBoolean();
             begin(snapshot.packageName, selected, cancel);
             starter.start(snapshot.packageName, selected, cancel);
@@ -83,6 +88,11 @@ final class AdbBatchGrantUi {
         running = new AlertDialog.Builder(activity).setTitle("正在一键授权 · " + pkg)
                 .setView(detail).setPositiveButton("停止后续操作", null).create();
         running.setCancelable(false);
+        running.setOnKeyListener((dialog, keyCode, event) -> {
+            if (keyCode != KeyEvent.KEYCODE_BACK) return false;
+            if (event.getAction() == KeyEvent.ACTION_UP) activity.onBackPressed();
+            return true;
+        });
         running.setOnShowListener(ignored -> running.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener(v -> {
             cancel.set(true);
             detail.setText(detail.getText() + "\n已请求停止；当前项完成后停止。未确认项请重新读取核对。");
@@ -97,7 +107,8 @@ final class AdbBatchGrantUi {
         detail.setText("目标应用：" + value.packageName + "\n已确认授权 " + value.grantedCount()
                 + " · 跳过 " + value.skippedCount() + " · 失败 " + value.failedCount()
                 + " · 未确认 " + value.pendingCount() + "\n当前："
-                + (value.current == null ? "准备下一项" : value.current));
+                + (value.current == null ? "准备下一项" : value.current)
+                + (stop != null && stop.get() ? "\n已请求停止；当前项完成后停止。未确认项请重新读取核对。" : ""));
     }
 
     void finish(AdbBatchGrant.Result result, Runnable retry) {
@@ -107,27 +118,33 @@ final class AdbBatchGrantUi {
         running = null;
         report(result, (result.cancelled ? "已停止；未处理项可能未执行，重新读取后可重试。"
                 : result.interrupted ? "读取或连接中断；未确认项可能已生效，重新连接后核对。" : "逐项核对完成。")
-                + (result.reason.isEmpty() ? "" : "\n原因：" + result.reason), retry);
+                + (result.reason.isEmpty() ? "" : "\n原因：" + result.reason), retry, null);
         packageName = null; stop = null;
     }
 
-    void disconnect() {
+    boolean disconnect(Runnable afterSummary) {
         if (stop != null) stop.set(true);
+        boolean showingSummary = running != null;
         if (running != null) {
             running.dismiss(); running = null;
-            report(last, "连接已断开；未确认项可能已生效，重新连接后核对。", null);
+            report(last, "连接已断开；未确认项可能已生效，重新连接后核对。", null, afterSummary);
         }
         packageName = null; stop = null;
+        return showingSummary;
     }
+
+    void disconnect() { disconnect(null); }
 
     void close() {
         if (stop != null) stop.set(true);
+        if (confirmation != null) confirmation.dismiss();
         if (running != null) running.dismiss();
-        running = null; packageName = null; stop = null;
+        if (reportDialog != null) reportDialog.dismiss();
+        confirmation = null; running = null; reportDialog = null; packageName = null; stop = null;
     }
 
     private boolean active(String pkg) { return packageName != null && packageName.equals(pkg); }
-    private void report(AdbBatchGrant.Progress value, String note, Runnable retry) {
+    private void report(AdbBatchGrant.Progress value, String note, Runnable retry, Runnable afterSummary) {
         StringBuilder message = new StringBuilder(note);
         if (value != null) {
             message.append("\n已确认授权 ").append(value.grantedCount()).append(" · 跳过 ")
@@ -137,10 +154,15 @@ final class AdbBatchGrantUi {
                 message.append("\n").append(entry.permission)
                         .append("：").append(outcome(entry.outcome)).append(" · ").append(entry.reason);
         } else message.append("\n尚无已确认的授权结果。");
+        if (reportDialog != null) reportDialog.dismiss();
         AlertDialog.Builder dialog = new AlertDialog.Builder(activity).setTitle("一键授权结果")
-                .setMessage(message.toString()).setNegativeButton("关闭", null);
+                .setMessage(message.toString()).setNegativeButton("关闭", (d, w) -> {
+                    if (afterSummary != null) afterSummary.run();
+                });
         if (retry != null) dialog.setPositiveButton("重试未授权项", (d, w) -> retry.run());
-        dialog.show();
+        reportDialog = dialog.create();
+        if (afterSummary != null) reportDialog.setCancelable(false);
+        reportDialog.show();
     }
     private static String outcome(AdbBatchGrant.Outcome outcome) {
         switch (outcome) {

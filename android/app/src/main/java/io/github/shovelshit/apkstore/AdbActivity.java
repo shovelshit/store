@@ -257,9 +257,10 @@ public final class AdbActivity extends Activity {
             public void failure(Exception error) { busy = false; showStatus("连接失败，请查看详情"); deviceDetail.setText("连接失败：" + error.getMessage()); updateButtons(); }
         });
     }
-    private void disconnect(boolean cancelWork) {
-        if (controller == null) return;
-        if (batchUi != null) batchUi.disconnect();
+    private void disconnect(boolean cancelWork) { disconnect(cancelWork, null); }
+    private boolean disconnect(boolean cancelWork, Runnable afterSummary) {
+        if (controller == null) return false;
+        boolean showingSummary = batchUi != null && batchUi.disconnect(afterSummary);
         boolean inFlight = busy;
         controller.disconnect(); connected = false; busy = false;
         boolean cancelledInstall = installing;
@@ -279,6 +280,7 @@ public final class AdbActivity extends Activity {
         renderApps();
         if (permissions != null) permissions.removeAllViews();
         updateButtons();
+        return showingSummary;
     }
     private void updateButtons() {
         if (connect == null) return;
@@ -378,6 +380,11 @@ public final class AdbActivity extends Activity {
                 busy = false; updateButtons(); status.setVisibility(View.GONE);
                 batchUi.finish(result, AdbActivity.this::previewBatchGrant);
                 if (result.snapshot != null) permissionCallback().success(result.snapshot);
+                else {
+                    displayedPermissions = null;
+                    permissions.removeAllViews();
+                    permissions.addView(text("当前权限状态不可读。请重新连接后选择此应用核对权限。", 13));
+                }
             }
             public void failure(Exception error) {
                 if (isFinishing() || isDestroyed() || !pkg.equals(selectedPackage)) return;
@@ -532,7 +539,9 @@ public final class AdbActivity extends Activity {
             new AlertDialog.Builder(this).setTitle("取消当前操作并退出？")
                     .setMessage("本机操作将取消；设备端已开始的安装可能继续，请检查目标应用状态。")
                     .setNegativeButton("继续等待", null)
-                    .setPositiveButton("退出", (dialog, which) -> { disconnect(true); finish(); }).show();
+                    .setPositiveButton("退出", (dialog, which) -> {
+                        if (!disconnect(true, this::finish)) finish();
+                    }).show();
         } else finish();
     }
     @Override public void onBackPressed() { handleBack(); }

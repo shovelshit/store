@@ -96,7 +96,7 @@ public final class AdbBatchGrant {
             // A final snapshot is best-effort. Already confirmed entries remain confirmed.
             if (!stopped && !interrupted) snapshot = operations.readPermissions(packageName);
         } catch (IOException transport) {
-            interrupted = true; reason = transport.getMessage();
+            interrupted = true; reason = transport.getMessage(); snapshot = null;
         }
         return new Result(packageName, entries, snapshot, interrupted, stopped, reason);
     }

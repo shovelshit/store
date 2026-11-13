@@ -5,6 +5,7 @@ public final class AdbNavigationTest {
         AdbNavigation navigation = new AdbNavigation();
         navigation.showApplications("fixture", 7);
         navigation.openPermissions("io.github.fixture");
+        check(navigation.back(true) == AdbNavigation.Back.CONFIRM_EXIT, "busy detail prompts before leaving");
         check(navigation.back(false) == AdbNavigation.Back.RETURN_TO_LIST, "detail back");
         check(navigation.tab() == AdbNavigation.Tab.APPS, "apps tab");
         check("fixture".equals(navigation.query()) && navigation.listPosition() == 7, "list state");
