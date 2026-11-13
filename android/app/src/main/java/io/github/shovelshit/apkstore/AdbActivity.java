@@ -16,9 +16,12 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.Button;
+import android.widget.BaseAdapter;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ListView;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import io.github.shovelshit.apkstore.adb.AdbClient;
@@ -43,13 +46,17 @@ public final class AdbActivity extends Activity {
     private boolean connected, busy;
     private final AdbNavigation navigation = new AdbNavigation();
     private EditText host, port, search;
-    private TextView status, selected, target, identity, deviceDetail;
+    private TextView status, selected, target, identity, deviceDetail, installStatus;
     private Button connect, install, cancel, choose, deviceTab, appsTab, installTab;
-    private LinearLayout apps, permissions, appListPane, permissionPane;
-    private ScrollView appScroll;
+    private LinearLayout permissions, appListPane, permissionPane;
+    private ListView appList;
+    private BaseAdapter appAdapter;
+    private ProgressBar installBar;
+    private final AdbPresentation.InstallProgress installProgress = new AdbPresentation.InstallProgress();
     private View devicePage, appsPage, installPage;
     private CheckBox system;
     private List<AdbOperations.Application> applicationList = new ArrayList<>();
+    private List<AdbOperations.Application> visibleApplications = new ArrayList<>();
     private String selectedPackage;
 
     @Override protected void onCreate(Bundle state) {
@@ -128,6 +135,11 @@ public final class AdbActivity extends Activity {
         });
         installPane.addView(choose);
         install = button("安装到目标设备", this::confirmInstall); installPane.addView(install);
+        installBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        installBar.setMax(100);
+        installBar.setVisibility(View.GONE);
+        installPane.addView(installBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)));
+        installStatus = text(installProgress.detail(), 13); installPane.addView(installStatus);
         LinearLayout appPage = new LinearLayout(this); appPage.setOrientation(LinearLayout.VERTICAL);
         appPage.setPadding(dp(16), 0, dp(16), dp(12));
         appsPage = appPage; content.addView(appsPage);
@@ -138,14 +150,31 @@ public final class AdbActivity extends Activity {
         search = input("搜索包名", ""); appListPane.addView(search);
         search.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
-            public void onTextChanged(CharSequence s, int start, int before, int count) { navigation.showApplications(s.toString(), appScroll.getScrollY()); renderApps(); }
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                navigation.showApplications(s.toString(), 0);
+                renderApps();
+                appList.setSelection(0);
+            }
             public void afterTextChanged(Editable e) { }
         });
         system = new CheckBox(this); system.setText("包含系统应用"); system.setOnCheckedChangeListener((v, checked) -> loadApps()); appListPane.addView(system);
         appListPane.addView(button("刷新应用列表", this::loadApps));
-        appScroll = new ScrollView(this);
-        appListPane.addView(appScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-        apps = new LinearLayout(this); apps.setOrientation(LinearLayout.VERTICAL); appScroll.addView(apps);
+        appList = new ListView(this);
+        appAdapter = new BaseAdapter() {
+            @Override public int getCount() { return visibleApplications.size(); }
+            @Override public Object getItem(int position) { return visibleApplications.get(position); }
+            @Override public long getItemId(int position) { return position; }
+            @Override public View getView(int position, View convertView, ViewGroup parent) {
+                TextView label = convertView instanceof TextView ? (TextView) convertView : text("", 13);
+                label.setMinHeight(dp(44));
+                label.setPadding(dp(8), dp(10), dp(8), dp(10));
+                label.setText(visibleApplications.get(position).packageName);
+                return label;
+            }
+        };
+        appList.setAdapter(appAdapter);
+        appList.setOnItemClickListener((parent, view, position, id) -> showPermissions(visibleApplications.get(position).packageName));
+        appListPane.addView(appList, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         ScrollView permissionScroll = new ScrollView(this);
         permissionPane.addView(permissionScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         permissions = new LinearLayout(this); permissions.setOrientation(LinearLayout.VERTICAL); permissionScroll.addView(permissions);
@@ -191,7 +220,7 @@ public final class AdbActivity extends Activity {
                     public void failure(Exception error) {
                         target.setText("已连接 · 设备信息不可用");
                         deviceDetail.setText("读取设备信息失败：" + error.getMessage());
-                        status.setText("读取设备信息失败：" + error.getMessage()); loadApps();
+                        loadApps(); status.setText("设备信息不可用，请查看详情");
                     }
                 });
             }
@@ -210,10 +239,10 @@ public final class AdbActivity extends Activity {
         else status.setText("已断开；更改目标后需手动连接");
         applicationList.clear(); selectedPackage = null;
         if (navigation.permissionPackage() != null) {
-            navigation.showApplications(search.getText().toString(), appScroll.getScrollY());
+            navigation.showApplications(search.getText().toString(), appList.getFirstVisiblePosition());
             renderPane();
         }
-        if (apps != null) apps.removeAllViews();
+        renderApps();
         if (permissions != null) permissions.removeAllViews();
         updateButtons();
     }
@@ -242,19 +271,12 @@ public final class AdbActivity extends Activity {
         });
     }
     private void renderApps() {
-        if (apps == null) return;
-        apps.removeAllViews();
-        String query = search.getText().toString().trim().toLowerCase(java.util.Locale.US);
-        int count = 0;
-        for (AdbOperations.Application app : applicationList) {
-            if (!app.packageName.toLowerCase(java.util.Locale.US).contains(query)) continue;
-            if (++count > 100) { apps.addView(text("仅显示前 100 项，请输入包名缩小范围", 12)); break; }
-            apps.addView(button(app.packageName, () -> showPermissions(app.packageName)));
-        }
+        visibleApplications = AdbPresentation.filterApps(applicationList, search.getText().toString());
+        appAdapter.notifyDataSetChanged();
     }
     private void showPermissions(String packageName) {
         if (!connected || busy) return;
-        navigation.showApplications(search.getText().toString(), appScroll.getScrollY());
+        navigation.showApplications(search.getText().toString(), appList.getFirstVisiblePosition());
         navigation.openPermissions(packageName);
         renderPane();
         selectedPackage = packageName; busy = true; updateButtons(); status.setText("读取 " + packageName + " 的实际权限…");
@@ -266,12 +288,11 @@ public final class AdbActivity extends Activity {
                 busy = false; updateButtons(); status.setText("已读取 " + snapshot.packageName + " 的权限");
                 permissions.removeAllViews(); permissions.addView(text(snapshot.packageName, 16));
                 int shown = 0;
-                for (AdbOperations.Permission permission : snapshot.permissions) {
-                    if (permission.state == AdbOperations.State.NOT_DECLARED) continue;
+                for (AdbOperations.Permission permission : AdbPresentation.orderedDeclared(snapshot.permissions)) {
                     shown++;
                     LinearLayout line = row();
-                    TextView label = text(permissionLabel(permission.name) + " · " + permissionState(permission.state)
-                            + (permission.canGrant() || permission.canRevoke() ? "" : "\n" + disabledReason(permission)), 12);
+                    TextView label = text(AdbPresentation.permissionTitle(permission) + "\n"
+                            + AdbPresentation.permissionDetail(permission), 12);
                     line.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
                     if (permission.canGrant() || permission.canRevoke()) {
                         line.addView(button(permission.canRevoke() ? "撤销" : "授予", () -> {
@@ -334,19 +355,24 @@ public final class AdbActivity extends Activity {
     }
     private void install() {
         if (!connected || busy || source == null) return;
-        busy = true; updateButtons(); status.setText("正在上传安装包…");
+        busy = true; updateButtons();
+        installProgress.start(); showInstallProgress();
         ApkInstallSource chosen = source;
         controller.submitWithProgress((session, progress) -> {
             AdbOperations ops = new AdbOperations(cmd -> session.shell(cmd, 120000));
             try (InputStream stream = chosen.open()) {
                 return ops.install(stream, chosen.length, session::push,
-                        (done, total) -> progress.post(() -> status.setText(done == total
-                                ? "上传完成，正在设备安装…" : "上传 " + (done * 100 / total) + "%")));
+                        (done, total) -> progress.post(() -> {
+                            installProgress.uploaded(done, total);
+                            showInstallProgress();
+                        }));
             }
         }, new AdbController.Callback<String>() {
-            public void success(String result) { busy = false; status.setText("目标设备安装成功：" + result); updateButtons(); }
+            public void success(String result) {
+                busy = false; installProgress.succeeded(result); showInstallProgress(); updateButtons();
+            }
             public void failure(Exception error) {
-                busy = false; status.setText("安装失败或结果不确定：" + error.getMessage() + "；请检查目标设备状态"); updateButtons();
+                busy = false; installProgress.failed(error.getMessage()); showInstallProgress(); updateButtons();
             }
         });
     }
@@ -367,6 +393,13 @@ public final class AdbActivity extends Activity {
         view.setTextSize(12); view.setOnClickListener(v -> action.run()); return view;
     }
     private int dp(int size) { return (int) (size * getResources().getDisplayMetrics().density + .5f); }
+
+    private void showInstallProgress() {
+        status.setText(installProgress.summary());
+        installStatus.setText(installProgress.detail());
+        installBar.setVisibility(View.VISIBLE);
+        installBar.setProgress(installProgress.percent());
+    }
 
     private LinearLayout pane() {
         LinearLayout pane = new LinearLayout(this);
@@ -393,7 +426,7 @@ public final class AdbActivity extends Activity {
         if (action == AdbNavigation.Back.RETURN_TO_LIST) {
             selectedPackage = null;
             renderPane();
-            appScroll.post(() -> appScroll.scrollTo(0, navigation.listPosition()));
+            appList.post(() -> appList.setSelection(navigation.listPosition()));
         } else if (action == AdbNavigation.Back.CONFIRM_EXIT) {
             new AlertDialog.Builder(this).setTitle("取消当前操作并退出？")
                     .setMessage("本机操作将取消；设备端已开始的安装可能继续，请检查目标应用状态。")
@@ -403,32 +436,4 @@ public final class AdbActivity extends Activity {
     }
     @Override public void onBackPressed() { handleBack(); }
 
-    private String permissionLabel(String value) {
-        String suffix = value.substring("android.permission.".length());
-        switch (suffix) {
-            case "CAMERA": return "相机";
-            case "READ_EXTERNAL_STORAGE": return "读取存储";
-            case "WRITE_EXTERNAL_STORAGE": return "写入存储";
-            case "RECORD_AUDIO": return "麦克风";
-            case "ACCESS_COARSE_LOCATION": return "大致位置";
-            case "ACCESS_FINE_LOCATION": return "精确位置";
-            case "WRITE_SECURE_SETTINGS": return "修改安全设置";
-            case "SYSTEM_ALERT_WINDOW": return "悬浮窗";
-            case "WRITE_SETTINGS": return "修改系统设置";
-            case "PACKAGE_USAGE_STATS": return "应用使用情况";
-            default: return suffix;
-        }
-    }
-    private String permissionState(AdbOperations.State state) {
-        switch (state) {
-            case GRANTED: return "已授权";
-            case DENIED: return "未授权";
-            default: return "未知";
-        }
-    }
-    private String disabledReason(AdbOperations.Permission permission) {
-        if (permission.state == AdbOperations.State.UNSUPPORTED) return "此权限不支持通过 ADB 修改";
-        if (permission.state == AdbOperations.State.UNKNOWN) return "设备未返回可确认的权限状态";
-        return "此权限当前不可修改";
-    }
 }
