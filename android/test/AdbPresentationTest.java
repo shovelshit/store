@@ -38,6 +38,12 @@ public final class AdbPresentationTest {
         check(progress.detail().contains("Success") && progress.summary().equals("安装成功"), "result available locally");
         progress.failed("remote offline");
         check(progress.detail().contains("remote offline") && progress.summary().equals("安装失败"), "failure available locally");
+        progress.start();
+        progress.uploaded(42, 100);
+        progress.cancelled();
+        check(progress.summary().equals("本机操作已取消"), "cancellation replaces upload summary");
+        check(progress.detail().contains("设备端安装可能仍在进行"), "cancellation must not imply remote rollback");
+        check(progress.percent() == 0, "cancelled upload must not retain stale progress");
         System.out.println("AdbPresentationTest PASS");
     }
     private static void check(boolean condition, String message) {

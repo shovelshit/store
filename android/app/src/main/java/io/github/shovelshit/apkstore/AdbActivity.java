@@ -10,10 +10,12 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.TextUtils;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Gravity;
 import android.widget.FrameLayout;
 import android.widget.Button;
 import android.widget.BaseAdapter;
@@ -43,7 +45,7 @@ public final class AdbActivity extends Activity {
     private AdbController controller;
     private ApkInstallSource source;
     private int sourceEpoch;
-    private boolean connected, busy;
+    private boolean connected, busy, installing;
     private final AdbNavigation navigation = new AdbNavigation();
     private EditText host, port, search;
     private TextView status, selected, target, identity, deviceDetail, installStatus;
@@ -69,16 +71,33 @@ public final class AdbActivity extends Activity {
         setContentView(root);
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.VERTICAL);
-        header.setPadding(dp(16), dp(8), dp(16), 0);
+        header.setPadding(dp(12), dp(4), dp(12), 0);
         LinearLayout title = row();
-        title.addView(button("← 返回", this::handleBack));
-        title.addView(text("ADB 设备管理", 19));
+        TextView back = compactText("←", 20);
+        back.setGravity(Gravity.CENTER);
+        back.setContentDescription("返回");
+        back.setOnClickListener(v -> handleBack());
+        title.addView(back, new LinearLayout.LayoutParams(dp(48), dp(44)));
+        TextView heading = compactText("ADB 设备管理", 18);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        heading.setSingleLine(true);
+        heading.setEllipsize(TextUtils.TruncateAt.END);
+        title.addView(heading, new LinearLayout.LayoutParams(0, dp(44), 1));
+        TextView details = compactText("详情 ›", 13);
+        details.setGravity(Gravity.CENTER);
+        details.setContentDescription("查看设备详情");
+        details.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("设备详情")
+                .setMessage(deviceDetail.getText().length() == 0 ? "暂无设备详情" : deviceDetail.getText())
+                .setPositiveButton("关闭", null).show());
+        title.addView(details, new LinearLayout.LayoutParams(dp(64), dp(44)));
         header.addView(title);
-        target = text("未连接", 14); header.addView(target);
-        identity = text("目标：未连接 · 用户 0", 12); header.addView(identity);
-        Button details = button("详情", () -> deviceDetail.setVisibility(deviceDetail.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
-        header.addView(details);
-        deviceDetail = text("", 12); deviceDetail.setVisibility(View.GONE); header.addView(deviceDetail);
+        target = compactText("未连接", 14);
+        target.setSingleLine(true); target.setEllipsize(TextUtils.TruncateAt.END);
+        header.addView(target, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(26)));
+        identity = compactText("目标：未连接 · 用户 0", 12);
+        identity.setSingleLine(true); identity.setEllipsize(TextUtils.TruncateAt.END);
+        header.addView(identity, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(26)));
+        deviceDetail = text("", 12);
         root.addView(header);
 
         LinearLayout tabs = row();
@@ -104,7 +123,11 @@ public final class AdbActivity extends Activity {
         address.addView(host, new LinearLayout.LayoutParams(0, dp(48), 3));
         address.addView(port, new LinearLayout.LayoutParams(0, dp(48), 1));
         device.addView(address);
-        status = text("输入目标地址并连接", 13); header.addView(status);
+        identity.setText(host.getText() + ":" + port.getText() + " · 未连接 · 用户 0");
+        status = compactText("", 12);
+        status.setSingleLine(true); status.setEllipsize(TextUtils.TruncateAt.END);
+        status.setVisibility(View.GONE);
+        header.addView(status, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(26)));
         connect = button("连接", () -> { if (connected) disconnect(false); else connect(); });
         device.addView(connect);
         cancel = button("取消当前操作", () -> disconnect(true)); device.addView(cancel);
@@ -185,7 +208,7 @@ public final class AdbActivity extends Activity {
             showTab(AdbNavigation.Tab.INSTALL);
             DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
             Uri uri = manager.getUriForDownloadedFile(download);
-            if (uri == null) status.setText("下载记录不存在，请重新选择安装包");
+            if (uri == null) showStatus("下载记录不存在，请重新选择安装包");
             else selectSource(uri);
         }
     }
@@ -195,48 +218,53 @@ public final class AdbActivity extends Activity {
         String address = host.getText().toString().trim();
         int number;
         try { number = Integer.parseInt(port.getText().toString().trim()); }
-        catch (NumberFormatException error) { status.setText("端口必须是 1 到 65535"); return; }
+        catch (NumberFormatException error) { showStatus("端口必须是 1 到 65535"); return; }
         if (address.isEmpty() || number < 1 || number > 65535) {
-            status.setText("目标地址或端口无效"); return;
+            showStatus("目标地址或端口无效"); return;
         }
-        connected = false; busy = true; status.setText("正在连接，请在目标设备确认授权…"); updateButtons();
+        connected = false; busy = true; showStatus("正在连接，请在目标设备确认授权…"); updateButtons();
         controller.connect(address, number, new AdbController.Callback<String>() {
             public void success(String result) {
-                if (result.startsWith("等待")) { status.setText(result); return; }
+                if (result.startsWith("等待")) { showStatus(result); return; }
                 busy = false; connected = true;
                 getSharedPreferences("adb_target", MODE_PRIVATE).edit()
                         .putString("host", address).putInt("port", number).apply();
                 navigation.setConnected(true);
                 identity.setText(result + " · shell · 用户 0");
                 target.setText("已连接 · 正在读取设备信息…");
-                status.setText("已连接"); updateButtons();
+                status.setVisibility(View.GONE); updateButtons();
                 controller.submit(s -> new AdbOperations(cmd -> s.shell(cmd, 30000)).deviceInfo(), new AdbController.Callback<AdbOperations.DeviceInfo>() {
                     public void success(AdbOperations.DeviceInfo info) {
                         target.setText("已连接 · " + info.manufacturer + " " + info.model + " · Android " + info.androidVersion);
                         identity.setText(result + " · " + (info.shellIdentity.startsWith("uid=0") ? "root" : "shell") + " · 用户 0");
-                        deviceDetail.setText("执行身份：" + info.shellIdentity + "\n本机授权身份保存在应用私有目录");
+                        deviceDetail.setText("设备：" + info.manufacturer + " " + info.model + " · Android " + info.androidVersion
+                                + "\n目标：" + result + " · 用户 0\n执行身份：" + info.shellIdentity
+                                + "\n本机授权身份保存在应用私有目录");
                         loadApps();
                     }
                     public void failure(Exception error) {
                         target.setText("已连接 · 设备信息不可用");
                         deviceDetail.setText("读取设备信息失败：" + error.getMessage());
-                        loadApps(); status.setText("设备信息不可用，请查看详情");
+                        loadApps(); showStatus("设备信息不可用，请查看详情");
                     }
                 });
             }
-            public void failure(Exception error) { busy = false; status.setText("连接失败，请展开详情"); deviceDetail.setText("连接失败：" + error.getMessage()); updateButtons(); }
+            public void failure(Exception error) { busy = false; showStatus("连接失败，请查看详情"); deviceDetail.setText("连接失败：" + error.getMessage()); updateButtons(); }
         });
     }
     private void disconnect(boolean cancelWork) {
         if (controller == null) return;
         boolean inFlight = busy;
         controller.disconnect(); connected = false; busy = false;
+        boolean cancelledInstall = installing;
+        installing = false;
         navigation.setConnected(false);
         target.setText("未连接");
-        identity.setText("目标：未连接 · 用户 0");
+        identity.setText(host.getText() + ":" + port.getText() + " · 未连接 · 用户 0");
         deviceDetail.setText("");
-        if (cancelWork && inFlight) status.setText("本机操作已取消；设备端安装可能仍在进行，请检查目标应用状态");
-        else status.setText("已断开；更改目标后需手动连接");
+        if (cancelledInstall) { installProgress.cancelled(); showInstallProgress(); }
+        else if (cancelWork && inFlight) showStatus("本机操作已取消");
+        else status.setVisibility(View.GONE);
         applicationList.clear(); selectedPackage = null;
         if (navigation.permissionPackage() != null) {
             navigation.showApplications(search.getText().toString(), appList.getFirstVisiblePosition());
@@ -256,7 +284,7 @@ public final class AdbActivity extends Activity {
     }
     private void loadApps() {
         if (!connected || busy) return;
-        busy = true; updateButtons(); status.setText("正在读取应用…");
+        busy = true; updateButtons(); showStatus("正在读取应用…");
         boolean includeSystem = system.isChecked();
         controller.submit(s -> {
             AdbOperations op = new AdbOperations(cmd -> s.shell(cmd, 30000));
@@ -265,9 +293,9 @@ public final class AdbActivity extends Activity {
             return all;
         }, new AdbController.Callback<List<AdbOperations.Application>>() {
             public void success(List<AdbOperations.Application> result) {
-                busy = false; applicationList = result; status.setText("已读取 " + result.size() + " 个应用"); renderApps(); updateButtons();
+                busy = false; applicationList = result; status.setVisibility(View.GONE); renderApps(); updateButtons();
             }
-            public void failure(Exception error) { busy = false; status.setText("读取应用失败：" + error.getMessage()); updateButtons(); }
+            public void failure(Exception error) { busy = false; showStatus("读取应用失败：" + error.getMessage()); updateButtons(); }
         });
     }
     private void renderApps() {
@@ -279,13 +307,13 @@ public final class AdbActivity extends Activity {
         navigation.showApplications(search.getText().toString(), appList.getFirstVisiblePosition());
         navigation.openPermissions(packageName);
         renderPane();
-        selectedPackage = packageName; busy = true; updateButtons(); status.setText("读取 " + packageName + " 的实际权限…");
+        selectedPackage = packageName; busy = true; updateButtons(); showStatus("正在读取应用权限…");
         controller.submit(s -> new AdbOperations(cmd -> s.shell(cmd, 30000)).readPermissions(packageName), permissionCallback());
     }
     private AdbController.Callback<AdbOperations.PermissionSnapshot> permissionCallback() {
         return new AdbController.Callback<AdbOperations.PermissionSnapshot>() {
             public void success(AdbOperations.PermissionSnapshot snapshot) {
-                busy = false; updateButtons(); status.setText("已读取 " + snapshot.packageName + " 的权限");
+                busy = false; updateButtons(); status.setVisibility(View.GONE);
                 permissions.removeAllViews(); permissions.addView(text(snapshot.packageName, 16));
                 int shown = 0;
                 for (AdbOperations.Permission permission : AdbPresentation.orderedDeclared(snapshot.permissions)) {
@@ -307,12 +335,12 @@ public final class AdbActivity extends Activity {
                 }
                 if (shown == 0) permissions.addView(text("此应用未声明可查看的权限", 13));
             }
-            public void failure(Exception error) { busy = false; updateButtons(); status.setText("权限操作失败：" + error.getMessage()); }
+            public void failure(Exception error) { busy = false; updateButtons(); showStatus("权限操作失败：" + error.getMessage()); }
         };
     }
     private void mutatePermission(String pkg, String permission, boolean grant) {
         if (!connected || busy || !pkg.equals(selectedPackage)) return;
-        busy = true; updateButtons(); status.setText("修改并核对目标权限…");
+        busy = true; updateButtons(); showStatus("修改并核对目标权限…");
         controller.submit(s -> new AdbOperations(cmd -> s.shell(cmd, 30000)).setPermission(pkg, permission, grant), permissionCallback());
     }
 
@@ -355,7 +383,7 @@ public final class AdbActivity extends Activity {
     }
     private void install() {
         if (!connected || busy || source == null) return;
-        busy = true; updateButtons();
+        busy = true; installing = true; updateButtons();
         installProgress.start(); showInstallProgress();
         ApkInstallSource chosen = source;
         controller.submitWithProgress((session, progress) -> {
@@ -369,10 +397,10 @@ public final class AdbActivity extends Activity {
             }
         }, new AdbController.Callback<String>() {
             public void success(String result) {
-                busy = false; installProgress.succeeded(result); showInstallProgress(); updateButtons();
+                busy = false; installing = false; installProgress.succeeded(result); showInstallProgress(); updateButtons();
             }
             public void failure(Exception error) {
-                busy = false; installProgress.failed(error.getMessage()); showInstallProgress(); updateButtons();
+                busy = false; installing = false; installProgress.failed(error.getMessage()); showInstallProgress(); updateButtons();
             }
         });
     }
@@ -387,6 +415,13 @@ public final class AdbActivity extends Activity {
         TextView view = new TextView(this); view.setText(value); view.setTextSize(size);
         view.setTextColor(Color.parseColor("#17212F")); view.setPadding(0, dp(9), 0, dp(9)); return view;
     }
+    private TextView compactText(String value, int size) {
+        TextView view = new TextView(this);
+        view.setText(value); view.setTextSize(size);
+        view.setTextColor(Color.parseColor("#17212F"));
+        view.setGravity(Gravity.CENTER_VERTICAL);
+        return view;
+    }
     private EditText input(String hint, String value) { EditText view = new EditText(this); view.setSingleLine(true); view.setHint(hint); view.setText(value); return view; }
     private Button button(String label, Runnable action) {
         Button view = new Button(this); view.setText(label); view.setAllCaps(false);
@@ -394,8 +429,12 @@ public final class AdbActivity extends Activity {
     }
     private int dp(int size) { return (int) (size * getResources().getDisplayMetrics().density + .5f); }
 
+    private void showStatus(String value) {
+        status.setText(value);
+        status.setVisibility(View.VISIBLE);
+    }
     private void showInstallProgress() {
-        status.setText(installProgress.summary());
+        showStatus(installProgress.summary());
         installStatus.setText(installProgress.detail());
         installBar.setVisibility(View.VISIBLE);
         installBar.setProgress(installProgress.percent());

@@ -77,5 +77,10 @@ public final class AdbPresentation {
         }
         public void succeeded(String result) { percent = 100; summary = "安装成功"; detail = "目标设备安装成功：" + result; }
         public void failed(String error) { summary = "安装失败"; detail = "安装失败或结果不确定：" + error + "；请检查目标设备状态"; }
+        public void cancelled() {
+            percent = 0;
+            summary = "本机操作已取消";
+            detail = "本机操作已取消；设备端安装可能仍在进行，请检查目标应用状态";
+        }
     }
 }
