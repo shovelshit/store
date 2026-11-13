@@ -42,5 +42,9 @@
             android:exported="false"
             android:label="ADB 设备管理"
             android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+        <activity android:name=".UpdateActivity" android:exported="false" android:label="应用更新" />
+        <provider android:name=".UpdateApkProvider"
+            android:authorities="io.github.shovelshit.apkstore.updates"
+            android:exported="false" android:grantUriPermissions="true" />
     </application>
 </manifest>

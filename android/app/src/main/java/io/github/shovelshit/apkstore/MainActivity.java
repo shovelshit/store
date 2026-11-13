@@ -110,6 +110,19 @@ public class MainActivity extends Activity {
         adbParams.setMargins(0, 0, dp(116), dp(18));
         root.addView(adbTools, adbParams);
 
+        TextView updates = new TextView(this);
+        updates.setText("更新"); updates.setTextSize(13); updates.setTextColor(Color.WHITE);
+        updates.setGravity(Gravity.CENTER); updates.setElevation(dp(6));
+        GradientDrawable updateBackground = new GradientDrawable();
+        updateBackground.setColor(Color.parseColor("#374151")); updateBackground.setCornerRadius(dp(8));
+        updates.setBackground(updateBackground);
+        updates.setContentDescription("检查应用更新");
+        updates.setOnClickListener(view -> startActivity(new Intent(this, UpdateActivity.class)));
+        FrameLayout.LayoutParams updateParams = new FrameLayout.LayoutParams(dp(58), dp(44));
+        updateParams.gravity = Gravity.BOTTOM | Gravity.END;
+        updateParams.setMargins(0,0,dp(182),dp(18));
+        root.addView(updates, updateParams);
+
         // 后台下载进度条（有任务时显示，点击进入下载管理）
         downloadBar = new LinearLayout(this);
         downloadBar.setOrientation(LinearLayout.VERTICAL);
@@ -143,6 +156,7 @@ public class MainActivity extends Activity {
         root.addView(downloadBar, downloadBarParams);
 
         setContentView(root);
+        UpdateCoordinator.get(getApplicationContext()).check(false);
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
