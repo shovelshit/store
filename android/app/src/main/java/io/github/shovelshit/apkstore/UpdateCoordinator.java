@@ -37,6 +37,7 @@ final class UpdateCoordinator {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final UpdateGate gate = new UpdateGate();
+    private final UpdateReady ready = new UpdateReady();
     private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
     private volatile State state = new State(Phase.IDLE,null,"",0);
     private UpdateCoordinator(Context context) { this(context, () -> UpdateTransport.readIndex(INDEX,false)); }
@@ -53,11 +54,14 @@ final class UpdateCoordinator {
         if (saved != null) {
             try {
                 UpdatePolicy.Release release = parse(new JSONObject(saved));
-                if (completed(release).isFile()) state = new State(Phase.READY,release,"安装包已下载，安装前将重新校验",release.size);
+                if (completed(release).isFile()) ready.restore(release,UpdateArchive.installed(app));
+                if (ready.release() != null) state = new State(Phase.READY,release,"安装包已下载，安装前将重新校验",release.size);
+                else preferences.edit().remove("ready").commit();
             } catch (Exception ignored) { preferences.edit().remove("ready").apply(); }
         }
     }
     State state() { return state; }
+    UpdatePolicy.Release ready() { return ready.release(); }
     void subscribe(Listener listener) { listeners.addIfAbsent(listener); main.post(() -> { if (listeners.contains(listener)) listener.changed(state); }); }
     void unsubscribe(Listener listener) { listeners.remove(listener); }
     private void publish(State next) {
@@ -85,12 +89,13 @@ final class UpdateCoordinator {
                 JSONObject json = new JSONObject(new String(indexSource.load(), StandardCharsets.UTF_8));
                 UpdatePolicy.Release release = parse(json);
                 UpdatePolicy.Decision decision = UpdatePolicy.decide(release,UpdateArchive.installed(app));
+                ready.checked(release);
                 publish(new State(decision == UpdatePolicy.Decision.AVAILABLE ? Phase.AVAILABLE
                         : decision == UpdatePolicy.Decision.INCOMPATIBLE ? Phase.INCOMPATIBLE : Phase.CURRENT,
                         decision == UpdatePolicy.Decision.AVAILABLE ? release : null,
                         decision == UpdatePolicy.Decision.AVAILABLE ? "发现新版本"
                                 : decision == UpdatePolicy.Decision.INCOMPATIBLE ? "新版本不支持当前 Android 系统" : "已是当前版本",0));
-            } catch (Exception e) { publish(new State(Phase.ERROR,null,"检查失败: " + e.getMessage(),0)); }
+            } catch (Exception e) { ready.checked(null); publish(new State(Phase.ERROR,null,"检查失败: " + e.getMessage(),0)); }
             finally { gate.end(); }
         });
     }
@@ -100,35 +105,54 @@ final class UpdateCoordinator {
         if (release == null) return;
         if (!gate.begin()) return;
         publish(new State(Phase.DOWNLOADING,release,"正在下载",0));
-        preferences.edit().putBoolean("working",true).apply();
         worker.execute(() -> {
-            File part = new File(directory(),release.sha256 + ".part");
             try {
-                UpdateTransport.transfer(release.url,part,release.size,release.sha256,
-                        done -> publish(new State(Phase.DOWNLOADING,release,"正在下载",done)),false);
-                UpdateArchive.verify(app,part,release);
-                File ready = completed(release);
-                java.nio.file.Files.move(part.toPath(),ready.toPath(),java.nio.file.StandardCopyOption.ATOMIC_MOVE,
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                JSONObject data = new JSONObject();
-                data.put("schema",1).put("packageName",release.packageName).put("versionCode",release.versionCode)
-                        .put("versionName",release.versionName).put("minSdk",release.minSdk).put("channel",release.channel)
-                        .put("url",release.url).put("size",release.size).put("sha256",release.sha256)
-                        .put("certificateSha256",release.certificateSha256).put("notes",release.notes);
-                preferences.edit().putString("ready",data.toString()).putBoolean("working",false).apply();
+                if (!preferences.edit().putBoolean("working",true).commit()) throw new java.io.IOException("无法保存更新状态");
+                Exception failure = UpdateJob.run(this::directory,release.sha256,part -> {
+                    UpdateTransport.transfer(release.url,part,release.size,release.sha256,
+                            done -> publish(new State(Phase.DOWNLOADING,release,"正在下载",done)),false);
+                    UpdateArchive.verify(app,part,release);
+                    File completed = completed(release);
+                    java.nio.file.Files.move(part.toPath(),completed.toPath(),java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                });
+                if (failure != null) throw failure;
+                JSONObject data = serialize(release);
+                if (!preferences.edit().putString("ready",data.toString()).putBoolean("working",false).commit())
+                    throw new java.io.IOException("无法保存已完成安装包状态");
+                ready.restore(release,UpdateArchive.installed(app));
                 publish(new State(Phase.READY,release,"安装包已校验",release.size));
             } catch (Exception e) {
-                preferences.edit().putBoolean("working",false).apply();
+                preferences.edit().putBoolean("working",false).commit();
                 publish(new State(Phase.ERROR,release,"下载或校验失败: " + e.getMessage(),0));
-            } finally { part.delete(); gate.end(); }
+            } finally { gate.end(); }
         });
     }
-    void revalidate(Listener callback) {
-        State snapshot = state;
-        if (snapshot.phase != Phase.READY) return;
+    private static JSONObject serialize(UpdatePolicy.Release release) throws Exception {
+        JSONObject data = new JSONObject();
+        data.put("schema",1).put("packageName",release.packageName).put("versionCode",release.versionCode)
+                .put("versionName",release.versionName).put("minSdk",release.minSdk).put("channel",release.channel)
+                .put("url",release.url).put("size",release.size).put("sha256",release.sha256)
+                .put("certificateSha256",release.certificateSha256).put("notes",release.notes);
+        return data;
+    }
+    UpdateCompletion revalidate(java.util.function.Consumer<UpdatePolicy.Release> callback) {
+        UpdatePolicy.Release snapshot = ready.release();
+        if (snapshot == null) return null;
+        UpdateCompletion completion = new UpdateCompletion(callback);
         worker.execute(() -> {
-            try { UpdateArchive.verify(app,completed(snapshot.release),snapshot.release); main.post(() -> callback.changed(snapshot)); }
-            catch (Exception e) { preferences.edit().remove("ready").apply(); publish(new State(Phase.ERROR,snapshot.release,"安装前校验失败: " + e.getMessage(),0)); }
+            try {
+                UpdateArchive.verify(app,completed(snapshot),snapshot);
+                if (ready.release() == snapshot) main.post(() -> completion.deliver(snapshot));
+            }
+            catch (Exception e) {
+                if (ready.release() == snapshot) {
+                    ready.clear();
+                    preferences.edit().remove("ready").commit();
+                    publish(new State(Phase.ERROR,snapshot,"安装前校验失败: " + e.getMessage(),0));
+                }
+            }
         });
+        return completion;
     }
 }

@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { deflateRawSync } from "node:zlib";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ANDROID_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -259,10 +259,13 @@ const sources = [
   ...walk(join(BUILD, "gen")).filter((file) => file.endsWith(".java")),
   ...walk(join(SRC, "java")).filter((file) => file.endsWith(".java"))
 ];
+// The offline build fixtures do not import OkHttp, so they do not resolve external jars.
+const usesHttpClient = sources.some((source) => readFileSync(source, "utf8").includes("import okhttp3."));
+const dependencyJars = usesHttpClient ? await (await import("./dependencies.mjs")).resolveDependencies() : [];
 run(java("javac"), [
   "--release", "11",
   "-encoding", "UTF-8",
-  "-classpath", platform.jar,
+  "-classpath", [platform.jar, ...dependencyJars].join(delimiter),
   "-d", join(BUILD, "classes"),
   ...sources
 ], `javac (${sources.length} 个源文件)`);
@@ -273,16 +276,21 @@ run(batch("d8"), [
   "--lib", platform.jar,
   "--min-api", "24",
   "--output", join(BUILD, "dex"),
-  ...classes
+  ...classes,
+  ...dependencyJars
 ], `d8 (${classes.length} 个 class)`);
 
 // 5. 合并 classes.dex
 const dexFile = join(BUILD, "dex", "classes.dex");
 if (!existsSync(dexFile)) fail("d8 未生成 classes.dex");
-writeFileSync(
-  join(BUILD, "app-unsigned.apk"),
-  appendZipEntry(readFileSync(join(BUILD, "base.apk")), "classes.dex", readFileSync(dexFile))
-);
+let unsigned = appendZipEntry(readFileSync(join(BUILD, "base.apk")), "classes.dex", readFileSync(dexFile));
+if (dependencyJars.length) {
+  unsigned = appendZipEntry(unsigned, "assets/third_party/Apache-2.0.txt",
+    readFileSync(join(ANDROID_ROOT, "third_party", "Apache-2.0.txt")));
+  unsigned = appendZipEntry(unsigned, "assets/third_party/THIRD_PARTY_NOTICES.md",
+    readFileSync(join(ANDROID_ROOT, "THIRD_PARTY_NOTICES.md")));
+}
+writeFileSync(join(BUILD, "app-unsigned.apk"), unsigned);
 console.log(`[build-apk] classes.dex 已并入 APK (${statSync(dexFile).size} bytes)`);
 
 // 6. 对齐
