@@ -29,6 +29,7 @@
 - `AdbBatchGrantUi.java`：权限选择确认、后台任务UI状态与结果展示；避免将AdbActivity显著扩成单体。
 - `AdbActivity.java`：入口、目标/操作生命周期、复用现有串行控制器、后续统一样式。
 - `NativeUi.java`：四个Activity共享的视觉/标题栏/控件与安全区域处理，避免巨型基础Activity。
+- `res/values/styles.xml`及Manifest主题引用：若原生对话框/勾选框需要共享accent，使用兼容API24的轻量应用主题；Task2只改主题，不改版本。
 - `MainActivity.java`：顶部工具栏、下载摘要、WebView布局；`DownloadsActivity.java`/`UpdateActivity.java`接入共享UI。
 - `android/test/AdbBatchGrantTest.java`、现有JVM入口：批量语义回归；测试辅助只放test目录。
 - Manifest/Main UserAgent/README：Task3版本及说明；索引仅在真实远端APK验证后生成。
@@ -59,7 +60,7 @@ Also cover nonzero pm/appops denial followed by a succeeding item, zero-exit wit
 
 ### Task 2: 统一原生UI与顶部工具栏、安全区域
 
-**Files:** Create `android/app/src/main/java/io/github/shovelshit/apkstore/NativeUi.java`; Modify `MainActivity.java`, `AdbActivity.java`, `AdbBatchGrantUi.java`, `DownloadsActivity.java`, `UpdateActivity.java`; focused test files only for new behavioral logic, or test-only native instrumentation under `android/test/device/`.
+**Files:** Create `android/app/src/main/java/io/github/shovelshit/apkstore/NativeUi.java`; Modify `MainActivity.java`, `AdbActivity.java`, `AdbBatchGrantUi.java`, `DownloadsActivity.java`, `UpdateActivity.java`; optionally create `android/app/src/main/res/values/styles.xml` and change Manifest theme reference only to unify native dialog/checkbox accent (version remains1.4.0/code6). Focused test files only for new behavioral logic, or test-only native instrumentation under `android/test/device/`.
 
 **Interfaces:** Consumes existing Activities, batch helper from Task1. Produces shared dp/card/text/button/header/insets helpers used by all four Activity screens. `NativeUi` is styling/layout only, not a navigation/auth/controller abstraction. Preserve each Activity's lifecycle/task state contracts.
 
