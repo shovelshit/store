@@ -2,7 +2,6 @@ package io.github.shovelshit.apkstore;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -30,27 +29,41 @@ public final class UpdateActivity extends Activity {
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         coordinator = UpdateCoordinator.get(getApplicationContext());
+        LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(NativeUi.BACKGROUND);
+        root.addView(NativeUi.header(this, "应用更新", this::finish));
         LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(20,16,20,20); content.setBackgroundColor(Color.WHITE);
-        TextView back = new TextView(this); back.setText("←  应用更新"); back.setTextSize(20);
-        back.setPadding(0,8,0,20); back.setOnClickListener(v -> finish()); content.addView(back);
+        content.setPadding(NativeUi.dp(this, 16), NativeUi.dp(this, 16),
+                NativeUi.dp(this, 16), NativeUi.dp(this, 28));
         TextView version = new TextView(this);
         try { android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(getPackageName(),0);
             version.setText("当前版本 " + info.versionName + " (" + info.versionCode + ")"); }
         catch (Exception e) { version.setText("当前版本信息不可用"); }
-        content.addView(version);
-        status = new TextView(this); status.setTextSize(17); status.setPadding(0,24,0,12); content.addView(status);
-        details = new TextView(this); details.setTextSize(15); content.addView(details);
+        version.setTextSize(13); version.setTextColor(NativeUi.MUTED); content.addView(version);
+        status = NativeUi.text(this, "", 17, NativeUi.INK);
+        status.setPadding(0,NativeUi.dp(this, 20),0,NativeUi.dp(this, 12)); content.addView(status);
+        details = NativeUi.text(this, "", 15, NativeUi.INK); content.addView(details);
         progress = new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal); progress.setMax(100);
         progress.setVisibility(View.GONE);
-        content.addView(progress,new LinearLayout.LayoutParams(-1,10));
-        action = new Button(this); action.setVisibility(View.GONE); content.addView(action);
-        cachedInstall = new Button(this); cachedInstall.setText("安装已下载版本");
+        content.addView(progress,new LinearLayout.LayoutParams(-1,NativeUi.dp(this, 8)));
+        action = NativeUi.button(this, "下载更新", () -> coordinator.download());
+        action.setVisibility(View.GONE); content.addView(action, actionParams());
+        cachedInstall = NativeUi.button(this, "安装已下载版本", this::install);
+        NativeUi.secondary(cachedInstall);
         cachedInstall.setVisibility(View.GONE);
-        cachedInstall.setOnClickListener(v -> install()); content.addView(cachedInstall);
-        Button check = new Button(this); check.setText("检查更新"); check.setOnClickListener(v -> coordinator.check(true)); content.addView(check);
-        ScrollView scroll = new ScrollView(this); scroll.addView(content); setContentView(scroll);
+        content.addView(cachedInstall, actionParams());
+        Button check = NativeUi.button(this, "检查更新", () -> coordinator.check(true));
+        NativeUi.secondary(check); content.addView(check, actionParams());
+        ScrollView scroll = new ScrollView(this); scroll.addView(content);
+        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        setContentView(root);
+        NativeUi.applyInsets(this, root);
         listener = this::render;
+    }
+    private LinearLayout.LayoutParams actionParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, NativeUi.dp(this, 48));
+        params.topMargin = NativeUi.dp(this, 8);
+        return params;
     }
     private void render(UpdateCoordinator.State state) {
         status.setText(state.message.isEmpty() ? "尚未检查更新" : state.message);

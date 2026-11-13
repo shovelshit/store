@@ -10,7 +10,6 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -63,99 +62,64 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        FrameLayout root = new FrameLayout(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(NativeUi.BACKGROUND);
+        LinearLayout toolbar = new LinearLayout(this);
+        toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.setPadding(dp(10), 0, dp(10), 0);
+        toolbar.setBackgroundColor(Color.WHITE);
+        TextView brand = NativeUi.text(this, "应用商店", 18, NativeUi.INK);
+        brand.setSingleLine(true);
+        brand.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        toolbar.addView(brand, new LinearLayout.LayoutParams(0, dp(56), 1));
+        toolbar.addView(NativeUi.headerAction(this, "↓ 下载", "打开下载管理",
+                () -> startActivity(new Intent(this, DownloadsActivity.class))),
+                new LinearLayout.LayoutParams(dp(76), dp(48)));
+        toolbar.addView(NativeUi.headerAction(this, "ADB", "打开 ADB 设备管理",
+                () -> startActivity(new Intent(this, AdbActivity.class))),
+                new LinearLayout.LayoutParams(dp(56), dp(48)));
+        toolbar.addView(NativeUi.headerAction(this, "更新", "检查应用更新",
+                () -> startActivity(new Intent(this, UpdateActivity.class))),
+                new LinearLayout.LayoutParams(dp(56), dp(48)));
+        root.addView(toolbar);
+
+        // A transient download summary occupies its own row above the page.
+        downloadBar = new LinearLayout(this);
+        downloadBar.setOrientation(LinearLayout.VERTICAL);
+        downloadBar.setPadding(dp(12), dp(8), dp(12), dp(8));
+        downloadBar.setVisibility(View.GONE);
+        downloadBar.setBackground(NativeUi.shape(this, Color.WHITE, 6, true));
+        downloadBar.setOnClickListener(view -> startActivity(new Intent(this, DownloadsActivity.class)));
+        downloadLabel = NativeUi.text(this, "", 12, NativeUi.INK);
+        downloadLabel.setSingleLine(true);
+        downloadLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        downloadBar.addView(downloadLabel);
+        downloadProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        downloadProgress.setMax(100);
+        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(-1, dp(5));
+        progressParams.topMargin = dp(6);
+        downloadBar.addView(downloadProgress, progressParams);
+        LinearLayout.LayoutParams summaryParams = new LinearLayout.LayoutParams(-1, -2);
+        summaryParams.setMargins(dp(10), dp(6), dp(10), dp(6));
+        root.addView(downloadBar, summaryParams);
+
+        FrameLayout webContainer = new FrameLayout(this);
         webView = new WebView(this);
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setMax(100);
 
-        root.addView(webView, new FrameLayout.LayoutParams(
+        webContainer.addView(webView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
         FrameLayout.LayoutParams barParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, dp(3));
         barParams.gravity = Gravity.TOP;
-        root.addView(progress, barParams);
-
-        // 右下角「下载」入口：打开应用内下载管理
-        TextView downloads = new TextView(this);
-        downloads.setText("↓ 下载");
-        downloads.setTextSize(13);
-        downloads.setTextColor(Color.WHITE);
-        downloads.setGravity(Gravity.CENTER);
-        downloads.setElevation(dp(6));
-        GradientDrawable fab = new GradientDrawable();
-        fab.setColor(Color.parseColor("#2563EB"));
-        fab.setCornerRadius(dp(22));
-        downloads.setBackground(fab);
-        downloads.setOnClickListener(view -> startActivity(new Intent(this, DownloadsActivity.class)));
-        FrameLayout.LayoutParams fabParams = new FrameLayout.LayoutParams(dp(92), dp(44));
-        fabParams.gravity = Gravity.BOTTOM | Gravity.END;
-        fabParams.setMargins(0, 0, dp(18), dp(18));
-        root.addView(downloads, fabParams);
-
-        TextView adbTools = new TextView(this);
-        adbTools.setText("ADB");
-        adbTools.setTextSize(13);
-        adbTools.setTextColor(Color.WHITE);
-        adbTools.setGravity(Gravity.CENTER);
-        adbTools.setElevation(dp(6));
-        GradientDrawable adbBackground = new GradientDrawable();
-        adbBackground.setColor(Color.parseColor("#087F74"));
-        adbBackground.setCornerRadius(dp(8));
-        adbTools.setBackground(adbBackground);
-        adbTools.setContentDescription("打开 ADB 设备管理");
-        adbTools.setOnClickListener(view -> startActivity(new Intent(this, AdbActivity.class)));
-        FrameLayout.LayoutParams adbParams = new FrameLayout.LayoutParams(dp(58), dp(44));
-        adbParams.gravity = Gravity.BOTTOM | Gravity.END;
-        adbParams.setMargins(0, 0, dp(116), dp(18));
-        root.addView(adbTools, adbParams);
-
-        TextView updates = new TextView(this);
-        updates.setText("更新"); updates.setTextSize(13); updates.setTextColor(Color.WHITE);
-        updates.setGravity(Gravity.CENTER); updates.setElevation(dp(6));
-        GradientDrawable updateBackground = new GradientDrawable();
-        updateBackground.setColor(Color.parseColor("#374151")); updateBackground.setCornerRadius(dp(8));
-        updates.setBackground(updateBackground);
-        updates.setContentDescription("检查应用更新");
-        updates.setOnClickListener(view -> startActivity(new Intent(this, UpdateActivity.class)));
-        FrameLayout.LayoutParams updateParams = new FrameLayout.LayoutParams(dp(58), dp(44));
-        updateParams.gravity = Gravity.BOTTOM | Gravity.END;
-        updateParams.setMargins(0,0,dp(182),dp(18));
-        root.addView(updates, updateParams);
-
-        // 后台下载进度条（有任务时显示，点击进入下载管理）
-        downloadBar = new LinearLayout(this);
-        downloadBar.setOrientation(LinearLayout.VERTICAL);
-        downloadBar.setPadding(dp(12), dp(8), dp(12), dp(8));
-        downloadBar.setElevation(dp(4));
-        downloadBar.setVisibility(View.GONE);
-        GradientDrawable barBackground = new GradientDrawable();
-        barBackground.setColor(Color.WHITE);
-        barBackground.setCornerRadius(dp(12));
-        barBackground.setStroke(dp(1), Color.parseColor("#E5E9F2"));
-        downloadBar.setBackground(barBackground);
-        downloadBar.setOnClickListener(view -> startActivity(new Intent(this, DownloadsActivity.class)));
-
-        downloadLabel = new TextView(this);
-        downloadLabel.setTextSize(12);
-        downloadLabel.setTextColor(Color.parseColor("#0F172A"));
-        downloadLabel.setSingleLine(true);
-        downloadBar.addView(downloadLabel);
-
-        downloadProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        downloadProgress.setMax(100);
-        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(5));
-        progressParams.topMargin = dp(6);
-        downloadBar.addView(downloadProgress, progressParams);
-
-        FrameLayout.LayoutParams downloadBarParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
-        downloadBarParams.gravity = Gravity.BOTTOM;
-        downloadBarParams.setMargins(dp(14), 0, dp(14), dp(74));
-        root.addView(downloadBar, downloadBarParams);
+        webContainer.addView(progress, barParams);
+        root.addView(webContainer, new LinearLayout.LayoutParams(-1, 0, 1));
 
         setContentView(root);
+        NativeUi.applyInsets(this, root);
         UpdateCoordinator.get(getApplicationContext()).check(false);
 
         WebSettings settings = webView.getSettings();
@@ -323,7 +287,7 @@ public class MainActivity extends Activity {
         webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null);
     }
 
-    /** 扫描下载记录，更新底部常驻进度条（下载由系统 DownloadManager 在后台继续） */
+    /** 扫描下载记录，更新顶部摘要（下载由系统 DownloadManager 在后台继续）。 */
     private void updateDownloadBar() {
         if (downloadBar == null) return;
         JSONArray items = DownloadStore.read(this);

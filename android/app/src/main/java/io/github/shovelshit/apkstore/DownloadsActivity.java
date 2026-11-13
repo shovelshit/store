@@ -5,14 +5,12 @@ import android.app.DownloadManager;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Color;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
-import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -48,48 +46,30 @@ public class DownloadsActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.parseColor("#F4F6FB"));
-        root.setPadding(dp(16), dp(18), dp(16), dp(10));
-
-        // 顶部返回栏
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-
-        TextView back = new TextView(this);
-        back.setText("←");
-        back.setTextSize(24);
-        back.setTextColor(Color.parseColor("#0F172A"));
-        back.setGravity(Gravity.CENTER);
-        back.setPadding(dp(6), dp(2), dp(14), dp(2));
-        back.setContentDescription("返回");
-        back.setOnClickListener(view -> finish());
-        header.addView(back);
-
-        TextView title = new TextView(this);
-        title.setText("下载管理");
-        title.setTextSize(20);
-        title.setTextColor(Color.parseColor("#0F172A"));
-        header.addView(title, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        root.addView(header);
+        root.setBackgroundColor(NativeUi.BACKGROUND);
+        root.addView(NativeUi.header(this, "下载管理", this::finish));
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(16), dp(8), dp(16), dp(16));
+        root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
 
         empty = new TextView(this);
         empty.setText("还没有下载任务，回到页面点「下载」即可");
         empty.setTextSize(13);
         empty.setTextColor(Color.parseColor("#64748B"));
         empty.setPadding(0, dp(20), 0, 0);
-        root.addView(empty);
+        body.addView(empty);
 
         ScrollView scroll = new ScrollView(this);
         container = new LinearLayout(this);
         container.setOrientation(LinearLayout.VERTICAL);
-        container.setPadding(0, dp(12), 0, 0);
+        container.setPadding(0, dp(12), 0, dp(20));
         scroll.addView(container);
-        root.addView(scroll, new LinearLayout.LayoutParams(
+        body.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         setContentView(root);
+        NativeUi.applyInsets(this, root);
     }
 
     @Override
@@ -134,11 +114,7 @@ public class DownloadsActivity extends Activity {
         String mime = item.optString("mime");
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
-        GradientDrawable background = new GradientDrawable();
-        background.setColor(Color.WHITE);
-        background.setCornerRadius(dp(14));
-        row.setBackground(background);
-        row.setPadding(dp(14), dp(12), dp(14), dp(12));
+        NativeUi.card(row, 14);
         LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         rowParams.bottomMargin = dp(10);
@@ -205,7 +181,8 @@ public class DownloadsActivity extends Activity {
         nameView.setText(name);
         nameView.setTextSize(14);
         nameView.setTextColor(Color.parseColor("#0F172A"));
-        nameView.setSingleLine(true);
+        nameView.setMaxLines(2);
+        nameView.setEllipsize(android.text.TextUtils.TruncateAt.END);
         row.addView(nameView);
 
         TextView statusView = new TextView(this);
@@ -225,6 +202,7 @@ public class DownloadsActivity extends Activity {
             origin.setTextSize(11);
             origin.setTextColor(Color.parseColor("#64748B"));
             origin.setSingleLine(true);
+            origin.setEllipsize(android.text.TextUtils.TruncateAt.END);
             row.addView(origin);
         }
 
@@ -238,13 +216,12 @@ public class DownloadsActivity extends Activity {
         }
 
         LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setGravity(Gravity.END);
+        actions.setOrientation(LinearLayout.VERTICAL);
         actions.setPadding(0, dp(8), 0, 0);
 
         if (apkCandidate && archive == ApkArchiveVerifier.Result.VALID) {
-            actions.addView(action("安装", "#2563EB", Color.WHITE, () -> install(id)));
-            actions.addView(action("ADB 安装", "#087F74", Color.WHITE, () -> {
+            actions.addView(action("安装", false, () -> install(id)));
+            actions.addView(action("ADB 安装", false, () -> {
                 Intent intent = new Intent(this, AdbActivity.class);
                 intent.putExtra(AdbActivity.EXTRA_DOWNLOAD_ID, id);
                 startActivity(intent);
@@ -252,17 +229,17 @@ public class DownloadsActivity extends Activity {
         }
         if (success && (!apkCandidate || archive == ApkArchiveVerifier.Result.INVALID)) {
             String fileType = mime;
-            actions.addView(action("打开", "#2563EB", Color.WHITE, () -> openFile(id, fileType)));
+            actions.addView(action("打开", false, () -> openFile(id, fileType)));
         }
         if (active) {
-            actions.addView(action("取消", "#F1F5F9", Color.parseColor("#0F172A"), () -> {
+            actions.addView(action("取消", true, () -> {
                 manager.remove(id);
                 DownloadStore.remove(this, id);
                 archiveVerifier.forget(id);
                 render();
             }));
         }
-        actions.addView(action("删除", "#F1F5F9", Color.parseColor("#0F172A"), () -> {
+        actions.addView(action("删除", true, () -> {
             manager.remove(id);
             DownloadStore.remove(this, id);
             archiveVerifier.forget(id);
@@ -273,24 +250,13 @@ public class DownloadsActivity extends Activity {
         return row;
     }
 
-    private Button action(String label, String background, int textColor, Runnable onClick) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setAllCaps(false);
-        button.setTextSize(13);
-        button.setTextColor(textColor);
-        GradientDrawable shape = new GradientDrawable();
-        shape.setColor(Color.parseColor(background));
-        shape.setCornerRadius(dp(9));
-        button.setBackground(shape);
-        button.setMinWidth(0);
-        button.setMinimumWidth(0);
-        button.setPadding(dp(14), 0, dp(14), 0);
+    private Button action(String label, boolean destructive, Runnable onClick) {
+        Button button = NativeUi.button(this, label, onClick);
+        if (destructive) NativeUi.destructive(button);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(36));
-        params.leftMargin = dp(8);
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        params.topMargin = dp(6);
         button.setLayoutParams(params);
-        button.setOnClickListener(view -> onClick.run());
         return button;
     }
 

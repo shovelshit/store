@@ -41,6 +41,7 @@ final class AdbBatchGrantUi {
         LinearLayout choices = new LinearLayout(activity);
         choices.setOrientation(LinearLayout.VERTICAL);
         choices.setPadding(dp(16), dp(8), dp(16), dp(8));
+        choices.setBackgroundColor(NativeUi.BACKGROUND);
         TextView summary = label("目标：" + target + " · 用户 0\n应用：" + snapshot.packageName
                 + "\n可授权 " + candidates.size() + " 项（逐项执行并回读确认）", 14);
         choices.addView(summary);
@@ -52,6 +53,7 @@ final class AdbBatchGrantUi {
                     || permission.name.equals("android.permission.WRITE_SETTINGS")
                     || permission.name.equals("android.permission.PACKAGE_USAGE_STATS") ? " · 特殊权限" : ""));
             box.setTextSize(13);
+            box.setTextColor(NativeUi.INK);
             box.setMinHeight(dp(48));
             box.setChecked(true);
             choices.addView(box);
@@ -174,7 +176,7 @@ final class AdbBatchGrantUi {
     }
     private TextView label(String text, int size) {
         TextView view = new TextView(activity); view.setText(text); view.setTextSize(size);
-        view.setTextColor(0xff0f172a); view.setGravity(Gravity.CENTER_VERTICAL); return view;
+        view.setTextColor(NativeUi.INK); view.setGravity(Gravity.CENTER_VERTICAL); return view;
     }
     private int dp(int value) { return (int) (value * activity.getResources().getDisplayMetrics().density + .5f); }
 }

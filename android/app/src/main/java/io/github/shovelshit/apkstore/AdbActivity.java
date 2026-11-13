@@ -5,7 +5,6 @@ import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.content.Intent;
 import android.graphics.Color;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -72,29 +71,31 @@ public final class AdbActivity extends Activity {
         batchUi = new AdbBatchGrantUi(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.parseColor("#F4F6FB"));
+        root.setBackgroundColor(NativeUi.BACKGROUND);
         setContentView(root);
+        NativeUi.applyInsets(this, root);
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.VERTICAL);
-        header.setPadding(dp(12), dp(4), dp(12), 0);
+        header.setPadding(dp(12), dp(4), dp(12), dp(6));
+        header.setBackgroundColor(Color.WHITE);
         LinearLayout title = row();
         TextView back = compactText("←", 20);
         back.setGravity(Gravity.CENTER);
         back.setContentDescription("返回");
         back.setOnClickListener(v -> handleBack());
-        title.addView(back, new LinearLayout.LayoutParams(dp(48), dp(44)));
+        title.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
         TextView heading = compactText("ADB 设备管理", 18);
         heading.setGravity(Gravity.CENTER_VERTICAL);
         heading.setSingleLine(true);
         heading.setEllipsize(TextUtils.TruncateAt.END);
-        title.addView(heading, new LinearLayout.LayoutParams(0, dp(44), 1));
+        title.addView(heading, new LinearLayout.LayoutParams(0, dp(48), 1));
         TextView details = compactText("详情 ›", 13);
         details.setGravity(Gravity.CENTER);
         details.setContentDescription("查看设备详情");
         details.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("设备详情")
                 .setMessage(deviceDetail.getText().length() == 0 ? "暂无设备详情" : deviceDetail.getText())
                 .setPositiveButton("关闭", null).show());
-        title.addView(details, new LinearLayout.LayoutParams(dp(64), dp(44)));
+        title.addView(details, new LinearLayout.LayoutParams(dp(64), dp(48)));
         header.addView(title);
         target = compactText("未连接", 14);
         target.setSingleLine(true); target.setEllipsize(TextUtils.TruncateAt.END);
@@ -110,7 +111,7 @@ public final class AdbActivity extends Activity {
         appsTab = button("应用", () -> showTab(AdbNavigation.Tab.APPS));
         installTab = button("安装", () -> showTab(AdbNavigation.Tab.INSTALL));
         for (Button tab : new Button[] {deviceTab, appsTab, installTab})
-            tabs.addView(tab, new LinearLayout.LayoutParams(0, dp(44), 1));
+            tabs.addView(tab, new LinearLayout.LayoutParams(0, dp(48), 1));
         root.addView(tabs);
         FrameLayout content = new FrameLayout(this);
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
@@ -125,7 +126,9 @@ public final class AdbActivity extends Activity {
                 .getInt("port", 5555)));
         port.setInputType(2);
         LinearLayout address = row();
-        address.addView(host, new LinearLayout.LayoutParams(0, dp(48), 3));
+        LinearLayout.LayoutParams hostParams = new LinearLayout.LayoutParams(0, dp(48), 3);
+        hostParams.rightMargin = dp(8);
+        address.addView(host, hostParams);
         address.addView(port, new LinearLayout.LayoutParams(0, dp(48), 1));
         device.addView(address);
         identity.setText(host.getText() + ":" + port.getText() + " · 未连接 · 用户 0");
@@ -135,7 +138,7 @@ public final class AdbActivity extends Activity {
         header.addView(status, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(26)));
         connect = button("连接", () -> { if (connected) disconnect(false); else connect(); });
         device.addView(connect);
-        cancel = button("取消当前操作", () -> disconnect(true)); device.addView(cancel);
+        cancel = button("取消当前操作", () -> disconnect(true)); NativeUi.destructive(cancel); device.addView(cancel);
         TextWatcher targetChange = new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
             public void onTextChanged(CharSequence s, int start, int before, int count) { disconnect(false); }
@@ -147,12 +150,7 @@ public final class AdbActivity extends Activity {
         installPage = installScroll; content.addView(installPage);
         installPane.addView(text("安装 APK", 17));
         selected = text("尚未选择安装包", 13);
-        selected.setPadding(dp(12), dp(12), dp(12), dp(12));
-        GradientDrawable fileCard = new GradientDrawable();
-        fileCard.setColor(Color.WHITE);
-        fileCard.setCornerRadius(dp(6));
-        fileCard.setStroke(dp(1), Color.parseColor("#D5DEE7"));
-        selected.setBackground(fileCard);
+        NativeUi.card(selected, 12);
         installPane.addView(selected);
         choose = button("选择本地 APK", () -> {
             if (busy) return;
@@ -185,7 +183,8 @@ public final class AdbActivity extends Activity {
             }
             public void afterTextChanged(Editable e) { }
         });
-        system = new CheckBox(this); system.setText("包含系统应用"); system.setOnCheckedChangeListener((v, checked) -> loadApps()); appListPane.addView(system);
+        system = new CheckBox(this); system.setText("包含系统应用"); system.setTextColor(NativeUi.INK);
+        system.setMinHeight(dp(48)); system.setOnCheckedChangeListener((v, checked) -> loadApps()); appListPane.addView(system);
         appListPane.addView(button("刷新应用列表", this::loadApps));
         appList = new ListView(this);
         appAdapter = new BaseAdapter() {
@@ -290,9 +289,9 @@ public final class AdbActivity extends Activity {
         cancel.setEnabled(busy);
         choose.setEnabled(!busy);
         if (deviceTab != null) {
-            deviceTab.setEnabled(!busy && navigation.tab() != AdbNavigation.Tab.DEVICE);
-            appsTab.setEnabled(!busy && navigation.tab() != AdbNavigation.Tab.APPS);
-            installTab.setEnabled(!busy && navigation.tab() != AdbNavigation.Tab.INSTALL);
+            NativeUi.tab(deviceTab, navigation.tab() == AdbNavigation.Tab.DEVICE, busy);
+            NativeUi.tab(appsTab, navigation.tab() == AdbNavigation.Tab.APPS, busy);
+            NativeUi.tab(installTab, navigation.tab() == AdbNavigation.Tab.INSTALL, busy);
             host.setEnabled(!busy); port.setEnabled(!busy);
             search.setEnabled(!busy); system.setEnabled(!busy);
             appList.setEnabled(!busy);
@@ -481,20 +480,19 @@ public final class AdbActivity extends Activity {
     }
     private LinearLayout row() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.HORIZONTAL); return view; }
     private TextView text(String value, int size) {
-        TextView view = new TextView(this); view.setText(value); view.setTextSize(size);
-        view.setTextColor(Color.parseColor("#17212F")); view.setPadding(0, dp(9), 0, dp(9)); return view;
+        TextView view = NativeUi.text(this, value, size, NativeUi.INK);
+        view.setPadding(0, dp(9), 0, dp(9)); return view;
     }
     private TextView compactText(String value, int size) {
         TextView view = new TextView(this);
         view.setText(value); view.setTextSize(size);
-        view.setTextColor(Color.parseColor("#17212F"));
+        view.setTextColor(NativeUi.INK);
         view.setGravity(Gravity.CENTER_VERTICAL);
         return view;
     }
-    private EditText input(String hint, String value) { EditText view = new EditText(this); view.setSingleLine(true); view.setHint(hint); view.setText(value); return view; }
+    private EditText input(String hint, String value) { return NativeUi.input(this, hint, value); }
     private Button button(String label, Runnable action) {
-        Button view = new Button(this); view.setText(label); view.setAllCaps(false);
-        view.setTextSize(12); view.setOnClickListener(v -> action.run()); return view;
+        return NativeUi.button(this, label, action);
     }
     private int dp(int size) { return (int) (size * getResources().getDisplayMetrics().density + .5f); }
 
@@ -525,9 +523,9 @@ public final class AdbActivity extends Activity {
         installPage.setVisibility(navigation.tab() == AdbNavigation.Tab.INSTALL ? View.VISIBLE : View.GONE);
         appListPane.setVisibility(navigation.permissionPackage() == null ? View.VISIBLE : View.GONE);
         permissionPane.setVisibility(navigation.permissionPackage() == null ? View.GONE : View.VISIBLE);
-        deviceTab.setEnabled(navigation.tab() != AdbNavigation.Tab.DEVICE);
-        appsTab.setEnabled(navigation.tab() != AdbNavigation.Tab.APPS);
-        installTab.setEnabled(navigation.tab() != AdbNavigation.Tab.INSTALL);
+        NativeUi.tab(deviceTab, navigation.tab() == AdbNavigation.Tab.DEVICE, busy);
+        NativeUi.tab(appsTab, navigation.tab() == AdbNavigation.Tab.APPS, busy);
+        NativeUi.tab(installTab, navigation.tab() == AdbNavigation.Tab.INSTALL, busy);
     }
     private void handleBack() {
         AdbNavigation.Back action = navigation.back(busy);
