@@ -78,6 +78,28 @@ public final class UpdateTransportTest {
                     check((System.nanoTime()-started)/1_000_000L < 900);
                     sender.join(2000);
                 }
+                try (ServerSocket trickle = new ServerSocket(0)) {
+                    Thread sender = new Thread(() -> {
+                        try (Socket socket = trickle.accept()) {
+                            socket.getInputStream().read(new byte[2048]);
+                            socket.getOutputStream().write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1;probe=".getBytes("UTF-8"));
+                            socket.getOutputStream().flush();
+                            for (int i = 0; i < 20; i++) {
+                                socket.getOutputStream().write('a');
+                                socket.getOutputStream().flush();
+                                Thread.sleep(50);
+                            }
+                            socket.getOutputStream().write("\r\nx\r\n0\r\n\r\n".getBytes("UTF-8"));
+                            socket.getOutputStream().flush();
+                        } catch (Exception ignored) { }
+                    });
+                    sender.start();
+                    long started = System.nanoTime();
+                    check(rejects(() -> { try { UpdateTransport.readIndex("http://127.0.0.1:"+trickle.getLocalPort()+"/",true,300); } catch(Exception e) { throw new RuntimeException(e); } }));
+                    long elapsed = (System.nanoTime()-started)/1_000_000L;
+                    check(elapsed < 900);
+                    sender.join(2000);
+                }
             } finally { Files.deleteIfExists(file); }
         } finally {
             server.stop(0);

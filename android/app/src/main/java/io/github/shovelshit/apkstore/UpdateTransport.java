@@ -35,7 +35,7 @@ final class UpdateTransport {
             .readTimeout(15,TimeUnit.SECONDS)
             .build();
 
-    private static Response open(String address, boolean localTest, long deadlineNanos) throws IOException {
+    private static Response open(String address, boolean localTest, long deadlineNanos, boolean index) throws IOException {
         for (int hop = 0; hop < 4; hop++) {
             long remaining = deadlineNanos - System.nanoTime();
             if (remaining <= 0) throw new IOException("更新请求超时");
@@ -44,6 +44,7 @@ final class UpdateTransport {
                     || !url.username().isEmpty() || !url.password().isEmpty()) throw new IOException("更新地址必须使用 HTTPS");
             Request request = new Request.Builder().url(url).get().build();
             Call call = CLIENT.newCall(request);
+            if (index) call.timeout().deadlineNanoTime(deadlineNanos);
             CountDownLatch done = new CountDownLatch(1);
             AtomicReference<Response> value = new AtomicReference<>();
             AtomicReference<IOException> error = new AtomicReference<>();
@@ -84,15 +85,14 @@ final class UpdateTransport {
     static byte[] readIndex(String url, boolean localTest) throws IOException { return readIndex(url,localTest,15000); }
     static byte[] readIndex(String url, boolean localTest, int timeoutMillis) throws IOException {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
-        try (Response response = open(url,localTest,deadline)) {
+        try (Response response = open(url,localTest,deadline,true)) {
             if (response.body() == null || response.body().contentLength() > MAX_INDEX) throw new IOException("更新索引过大");
+            response.body().source().timeout().deadlineNanoTime(deadline);
             ByteArrayOutputStream output = new ByteArrayOutputStream();
             try (InputStream input = response.body().byteStream()) {
                 byte[] buffer = new byte[8192]; int n;
                 while (true) {
                     if (System.nanoTime() >= deadline) throw new IOException("更新索引读取超时");
-                    int remaining = (int)Math.max(1,TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime()));
-                    response.body().source().timeout().timeout(remaining,TimeUnit.MILLISECONDS);
                     n = input.read(buffer);
                     if (n == -1) break;
                     if (System.nanoTime() >= deadline) throw new IOException("更新索引读取超时");
@@ -106,7 +106,7 @@ final class UpdateTransport {
 
     static void transfer(String url, File part, long size, String hash, LongConsumer progress, boolean localTest) throws IOException {
         if (size <= 0 || size > UpdatePolicy.MAX_APK) throw new IOException("安装包大小无效");
-        try (Response response = open(url,localTest,System.nanoTime()+TimeUnit.SECONDS.toNanos(15))) {
+        try (Response response = open(url,localTest,System.nanoTime()+TimeUnit.SECONDS.toNanos(15),false)) {
             if (response.body() == null || response.body().contentLength() > size) throw new IOException("安装包大小不匹配");
             MessageDigest digest;
             try { digest = MessageDigest.getInstance("SHA-256"); }
