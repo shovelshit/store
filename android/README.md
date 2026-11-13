@@ -6,14 +6,14 @@
 ## 产物
 
 ```
-android/dist/apk-store-1.4.0.apk
-android/dist/apk-store-1.4.0.apk.sha256
+android/dist/apk-store-1.4.1.apk
+android/dist/apk-store-1.4.1.apk.sha256
 ```
 
 - 包名 `io.github.shovelshit.apkstore`
 - minSdk 24（Android 7.0），targetSdk 34
 - 启动图标：`res/mipmap-xxxhdpi/ic_launcher.png`（蓝色渐变 + 下载箭头 + APK 字样）
-- 当前版本 1.4.0（versionCode 6）；APK 文件名从 Manifest 读取
+- 当前版本 1.4.1（versionCode 7）；APK 文件名从 Manifest 读取
 - 原有签名优先；没有原签名时仅可显式生成开发签名，**不能保证覆盖安装旧版**
 
 ## 构建
@@ -45,20 +45,23 @@ node --test pages/store/*.test.cjs
 首次安装需手动侧载 APK；之后 App 冷启动时会自动检查（一小时内不重复），返回前台不会自动检查
 `https://store.ltools.asia/android/update.json`，也可在应用更新页手动检查。
 索引只对 `development` 渠道开放，必须与已安装版本使用相同签名证书。
-先用保留的开发密钥构建并校验 APK，再创建 `android-v1.4.0-dev` 预发布并上传
-`apk-store-1.4.0.apk` 和 `.apk.sha256`。独立下载发布资产核对哈希及签名后，运行：
+先用保留的同一开发密钥构建并校验 APK（`--dev-signing` 复用已有开发密钥），
+再创建 `android-v1.4.1-dev` 预发布并上传 `apk-store-1.4.1.apk` 和 `.apk.sha256`。
+独立下载发布资产核对哈希及签名后，运行：
 
 ```sh
 node android/scripts/prepare-update.mjs \
-  --apk android/dist/apk-store-1.4.0.apk \
+  --apk android/dist/apk-store-1.4.1.apk \
   --manifest android/app/src/main/AndroidManifest.xml \
   --sdk /path/to/Android/sdk \
-  --url https://github.com/OWNER/REPO/releases/download/android-v1.4.0-dev/apk-store-1.4.0.apk \
+  --url https://github.com/OWNER/REPO/releases/download/android-v1.4.1-dev/apk-store-1.4.1.apk \
   --channel development --notes /path/to/release-notes.txt \
   --output pages/store/android/update.json
 ```
 
-使用真实公开 HTTPS 发布地址替换示例 URL。脚本从 SDK `aapt2` 和 `apksigner` 读取
+使用真实公开 HTTPS 发布地址替换示例 URL。固定索引地址仍为
+`https://store.ltools.asia/android/update.json`，发布前保留现有 1.4.0 索引。
+脚本从 SDK `aapt2` 和 `apksigner` 读取
 APK 包名、版本、最低 SDK 与证书，独立下载指定资产比对大小和 SHA-256；任一步失败
 都不会替换已有索引。只在发布资产实际可访问且通过核对后提交索引，再更新父仓库
 Store gitlink 并部署。索引发布后还需检查公开 URL 可免登录返回 JSON，且内容与远端 APK 一致。
@@ -79,8 +82,8 @@ Store gitlink 并部署。索引发布后还需检查公开 URL 可免登录返�
 - 启动加载 `https://store.ltools.asia/`（入口写在 `MainActivity.HOME_URL`，改这里即可换地址）
 - 页面里的 `.apk` 链接不再交给 WebView，而是 `DownloadManager` 下载到系统「下载」目录，
   并记录到应用内的下载列表
-- 右下角「↓ 下载」按钮打开**下载管理**（`DownloadsActivity`）：实时进度、已完成、失败，
-  可**安装 / 取消 / 删除**
+- 顶部工具栏提供「↓ 下载」「ADB」「更新」入口；下载管理（`DownloadsActivity`）显示实时进度、
+  已完成和失败记录，可**安装 / 取消 / 删除**；下载摘要占用网页上方的正常布局，不遮挡网页
 - 安装时若没有「安装未知应用」权限，会跳转系统授权页（`ACTION_MANAGE_UNKNOWN_APP_SOURCES`），
   返回后自动继续安装
 - Android 9 及以下首次下载会申请存储权限，拒绝则提示无法保存
@@ -100,6 +103,10 @@ Store gitlink 并部署。索引发布后还需检查公开 URL 可免登录返�
 仅连接已启用的传统 ADB TCP 服务端口。部分厂商 ROM 禁用无线 ADB 或限制 shell 权限。
 
 连接后可搜索用户 0 的第三方或系统应用，查看实际权限并在确认弹窗后修改支持的权限。
+「一键授权」仅针对当前选中的单个应用，确认时可取消勾选；只尝试该应用已声明、当前可授予的权限，
+逐项执行并回读。拒绝或失败的单项会记入结果并继续后续项，不表示全部成功；「停止后续操作」
+会在当前项完成后停止，断连也会停止后续命令。结果区分已确认、跳过、失败和未确认，
+未确认项需重新连接或读取核对，不会自动回滚已授予的权限。
 支持可变更且由目标应用声明的运行时权限、`WRITE_SECURE_SETTINGS`，以及
 `SYSTEM_ALERT_WINDOW`、`WRITE_SETTINGS`、`PACKAGE_USAGE_STATS` 对应的 AppOps；
 不提供任意 shell 命令。修改后重新读取目标状态，失败会显示错误；系统版本、ROM、应用声明和
