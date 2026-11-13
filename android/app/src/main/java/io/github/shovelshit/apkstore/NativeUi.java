@@ -2,9 +2,11 @@ package io.github.shovelshit.apkstore;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Point;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.StateListDrawable;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -78,8 +80,7 @@ final class NativeUi {
         view.setText(label);
         view.setAllCaps(false);
         view.setTextSize(14);
-        view.setTextColor(Color.WHITE);
-        view.setBackground(shape(activity, BLUE, 6, false));
+        buttonColors(view, BLUE, Color.WHITE, false);
         view.setMinHeight(dp(activity, 48));
         view.setMinimumHeight(dp(activity, 48));
         view.setOnClickListener(v -> action.run());
@@ -87,13 +88,22 @@ final class NativeUi {
     }
 
     static void secondary(Button button) {
-        button.setTextColor(BLUE);
-        button.setBackground(shape(button.getContext(), Color.WHITE, 6, true));
+        buttonColors(button, Color.WHITE, BLUE, true);
     }
 
     static void destructive(Button button) {
-        button.setTextColor(DANGER);
-        button.setBackground(shape(button.getContext(), Color.WHITE, 6, true));
+        buttonColors(button, Color.WHITE, DANGER, true);
+    }
+
+    private static void buttonColors(Button button, int fill, int foreground, boolean stroke) {
+        button.setTextColor(new ColorStateList(new int[][] {
+                new int[] {-android.R.attr.state_enabled}, new int[0]
+        }, new int[] {MUTED, foreground}));
+        StateListDrawable background = new StateListDrawable();
+        background.addState(new int[] {-android.R.attr.state_enabled},
+                shape(button.getContext(), Color.rgb(241, 245, 249), 6, true));
+        background.addState(new int[0], shape(button.getContext(), fill, 6, stroke));
+        button.setBackground(background);
     }
 
     static void tab(Button button, boolean selected, boolean busy) {
