@@ -215,6 +215,12 @@ public final class AdbActivity extends Activity {
             if (uri == null) showStatus("下载记录不存在，请重新选择安装包");
             else selectSource(uri);
         }
+        if (state != null) batchUi.restoreState(state);
+    }
+
+    @Override protected void onSaveInstanceState(Bundle state) {
+        batchUi.saveState(state, host.getText().toString().trim() + ":" + port.getText().toString().trim());
+        super.onSaveInstanceState(state);
     }
 
     private void connect() {

@@ -4,5 +4,7 @@
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="28" />
     <instrumentation android:name=".InsetsInstrumentation"
         android:targetPackage="io.github.shovelshit.apkstore" />
+    <instrumentation android:name=".BatchLifecycleInstrumentation"
+        android:targetPackage="io.github.shovelshit.apkstore" />
     <application android:label="Store device regression" />
 </manifest>

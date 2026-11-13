@@ -16,6 +16,9 @@ public final class AdbOperations {
     public static final class CommandFailure extends IOException {
         CommandFailure(String message) { super(message); }
     }
+    public static final class MutationRefusal extends IOException {
+        MutationRefusal(String message, Throwable cause) { super(message, cause); }
+    }
     public static final class VerificationFailure extends IOException {
         VerificationFailure(String message) { super(message); }
     }
@@ -168,8 +171,12 @@ public final class AdbOperations {
         PermissionSnapshot before = readPermissions(packageName);
         Permission selected = before.find(permission);
         if (selected == null || !selected.mutable) throw new IllegalArgumentException("目标应用未声明此权限");
-        if (special) shell("cmd appops set --user 0 " + packageName + " " + operation(suffix) + " " + (grant ? "allow" : "ignore"));
-        else shell("pm " + (grant ? "grant" : "revoke") + " --user 0 " + packageName + " " + permission);
+        try {
+            if (special) shell("cmd appops set --user 0 " + packageName + " " + operation(suffix) + " " + (grant ? "allow" : "ignore"));
+            else shell("pm " + (grant ? "grant" : "revoke") + " --user 0 " + packageName + " " + permission);
+        } catch (CommandFailure refusal) {
+            throw new MutationRefusal(refusal.getMessage(), refusal);
+        }
         PermissionSnapshot after = readPermissions(packageName);
         State actual = after.find(permission).state;
         if (actual != (grant ? State.GRANTED : State.DENIED)) throw new VerificationFailure("权限修改后未确认目标状态: " + actual);

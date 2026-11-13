@@ -3,6 +3,7 @@ package io.github.shovelshit.apkstore;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
+import android.os.Bundle;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.widget.CheckBox;
@@ -24,6 +25,9 @@ final class AdbBatchGrantUi {
     private AtomicBoolean stop;
     private AdbBatchGrant.Progress last;
     private String packageName;
+    private String targetIdentity;
+    private List<String> selected;
+    private String reportText;
 
     AdbBatchGrantUi(Activity activity) { this.activity = activity; }
 
@@ -75,6 +79,7 @@ final class AdbBatchGrantUi {
             dialog.dismiss();
             confirmation = null;
             AtomicBoolean cancel = new AtomicBoolean();
+            targetIdentity = target;
             begin(snapshot.packageName, selected, cancel);
             starter.start(snapshot.packageName, selected, cancel);
         }));
@@ -83,6 +88,8 @@ final class AdbBatchGrantUi {
 
     private void begin(String pkg, List<String> selected, AtomicBoolean cancel) {
         packageName = pkg; stop = cancel;
+        this.selected = new ArrayList<>(selected);
+        reportText = null;
         // Progress is delivered by the worker; before the first delivery no command is confirmed.
         last = null;
         detail = label("准备授权 " + selected.size() + " 项…", 14);
@@ -122,6 +129,7 @@ final class AdbBatchGrantUi {
                 : result.interrupted ? "读取或连接中断；未确认项可能已生效，重新连接后核对。" : "逐项核对完成。")
                 + (result.reason.isEmpty() ? "" : "\n原因：" + result.reason), retry, null);
         packageName = null; stop = null;
+        selected = null;
     }
 
     boolean disconnect(Runnable afterSummary) {
@@ -132,6 +140,7 @@ final class AdbBatchGrantUi {
             report(last, "连接已断开；未确认项可能已生效，重新连接后核对。", null, afterSummary);
         }
         packageName = null; stop = null;
+        selected = null;
         return showingSummary;
     }
 
@@ -143,11 +152,72 @@ final class AdbBatchGrantUi {
         if (running != null) running.dismiss();
         if (reportDialog != null) reportDialog.dismiss();
         confirmation = null; running = null; reportDialog = null; packageName = null; stop = null;
+        selected = null; reportText = null;
+    }
+
+    void saveState(Bundle state, String target) {
+        if (running == null && reportText == null) return;
+        String identity = targetIdentity == null ? target : targetIdentity;
+        state.putString("batch.target", identity);
+        state.putString("batch.package", packageName != null ? packageName : last == null ? null : last.packageName);
+        if (reportText != null && running == null) {
+            state.putString("batch.report", reportText);
+            return;
+        }
+        state.putBoolean("batch.active", true);
+        ArrayList<String> names = new ArrayList<>(), outcomes = new ArrayList<>(), reasons = new ArrayList<>();
+        if (last == null && selected != null) {
+            for (String name : selected) {
+                names.add(name); outcomes.add(AdbBatchGrant.Outcome.PENDING.name()); reasons.add("尚未处理");
+            }
+        } else if (last != null) {
+            for (AdbBatchGrant.Entry entry : last.entries) {
+                names.add(entry.permission); outcomes.add(entry.outcome.name()); reasons.add(entry.reason);
+            }
+        }
+        state.putStringArrayList("batch.names", names);
+        state.putStringArrayList("batch.outcomes", outcomes);
+        state.putStringArrayList("batch.reasons", reasons);
+    }
+
+    void restoreState(Bundle state) {
+        if (state == null) return;
+        targetIdentity = state.getString("batch.target");
+        String saved = state.getString("batch.report");
+        if (saved != null) { showReport(saved, null, null); return; }
+        if (!state.getBoolean("batch.active")) return;
+        ArrayList<String> names = state.getStringArrayList("batch.names");
+        ArrayList<String> outcomes = state.getStringArrayList("batch.outcomes");
+        ArrayList<String> reasons = state.getStringArrayList("batch.reasons");
+        StringBuilder message = new StringBuilder("界面重建，批量授权已停止；未确认项可能已生效，请重新连接后核对。\n目标：")
+                .append(targetIdentity).append(" · 用户 0\n应用：").append(state.getString("batch.package"));
+        int granted = 0, skipped = 0, failed = 0, pending = 0;
+        if (names != null && outcomes != null && reasons != null
+                && names.size() == outcomes.size() && names.size() == reasons.size()) {
+            for (String status : outcomes) {
+                if ("GRANTED".equals(status)) granted++;
+                else if ("SKIPPED".equals(status)) skipped++;
+                else if ("FAILED".equals(status)) failed++;
+                else pending++;
+            }
+            message.append("\n已确认授权 ").append(granted).append(" · 跳过 ").append(skipped)
+                    .append(" · 失败 ").append(failed).append(" · 未确认 ").append(pending);
+            for (int i = 0; i < names.size(); i++) {
+                String status = outcomes.get(i);
+                message.append("\n").append(names.get(i)).append("：")
+                        .append("GRANTED".equals(status) ? "已确认" : "SKIPPED".equals(status) ? "跳过"
+                                : "FAILED".equals(status) ? "失败" : "未确认")
+                        .append(" · ").append(reasons.get(i));
+            }
+        } else message.append("\n尚无已确认的授权结果。");
+        showReport(message.toString(), null, null);
     }
 
     private boolean active(String pkg) { return packageName != null && packageName.equals(pkg); }
     private void report(AdbBatchGrant.Progress value, String note, Runnable retry, Runnable afterSummary) {
-        StringBuilder message = new StringBuilder(note);
+        StringBuilder message = new StringBuilder(note).append("\n目标：")
+                .append(targetIdentity == null ? "未知" : targetIdentity).append(" · 用户 0")
+                .append("\n应用：").append(value == null ? packageName : value.packageName);
         if (value != null) {
             message.append("\n已确认授权 ").append(value.grantedCount()).append(" · 跳过 ")
                     .append(value.skippedCount()).append(" · 失败 ").append(value.failedCount())
@@ -156,13 +226,19 @@ final class AdbBatchGrantUi {
                 message.append("\n").append(entry.permission)
                         .append("：").append(outcome(entry.outcome)).append(" · ").append(entry.reason);
         } else message.append("\n尚无已确认的授权结果。");
+        showReport(message.toString(), retry, afterSummary);
+    }
+    private void showReport(String message, Runnable retry, Runnable afterSummary) {
         if (reportDialog != null) reportDialog.dismiss();
+        reportText = message;
         AlertDialog.Builder dialog = new AlertDialog.Builder(activity).setTitle("一键授权结果")
-                .setMessage(message.toString()).setNegativeButton("关闭", (d, w) -> {
+                .setMessage(message).setNegativeButton("关闭", (d, w) -> {
                     if (afterSummary != null) afterSummary.run();
                 });
         if (retry != null) dialog.setPositiveButton("重试未授权项", (d, w) -> retry.run());
         reportDialog = dialog.create();
+        AlertDialog shown = reportDialog;
+        shown.setOnDismissListener(d -> { if (reportDialog == shown) { reportText = null; reportDialog = null; } });
         if (afterSummary != null) reportDialog.setCancelable(false);
         reportDialog.show();
     }

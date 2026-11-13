@@ -17,16 +17,23 @@ public final class AdbBatchGrantTest {
         final List<String> commands = new ArrayList<>();
         boolean camera, fine = true, overlay;
         String refusal, unchanged;
+        int rejectedCameraReads;
         int transportAfter = Integer.MAX_VALUE;
         @Override public AdbClient.ShellResult run(String command) throws IOException {
             commands.add(command);
             if (commands.size() > transportAfter) throw new IOException("connection lost");
-            if (command.equals("dumpsys package " + PKG)) return new AdbClient.ShellResult(
+            if (command.equals("dumpsys package " + PKG)) {
+                if (camera && rejectedCameraReads > 0) {
+                    rejectedCameraReads--;
+                    return new AdbClient.ShellResult("permission dump unavailable", 1);
+                }
+                return new AdbClient.ShellResult(
                     "Package [" + PKG + "] (123):\n    requested permissions:\n"
                     + "      " + CAMERA + "\n      " + FINE + "\n      " + OVERLAY + "\n      " + INTERNET + "\n"
                     + "    User 0: installed=true\n      runtime permissions:\n"
                     + "        " + CAMERA + ": granted=" + camera + "\n"
                     + "        " + FINE + ": granted=" + fine + "\n", 0);
+            }
             if (command.equals("cmd appops get --user 0 " + PKG + " SYSTEM_ALERT_WINDOW"))
                 return new AdbClient.ShellResult("SYSTEM_ALERT_WINDOW: " + (overlay ? "allow" : "ignore"), 0);
             if (command.equals(refusal)) return new AdbClient.ShellResult("Permission denied", 1);
@@ -85,6 +92,18 @@ public final class AdbBatchGrantTest {
         yes(uncertain.interrupted); eq(uncertain.grantedCount(), 0); eq(uncertain.pendingCount(), 2);
         yes(uncertain.snapshot == null);
         eq(mutations(unreadable), 1);
+        Device failedReadback = new Device(); failedReadback.rejectedCameraReads = 10;
+        AdbBatchGrant.Result uncertainReadback = failedReadback.run(
+                Arrays.asList(OVERLAY, CAMERA, FINE), new AtomicBoolean(), new ArrayList<>());
+        yes(failedReadback.camera); yes(uncertainReadback.interrupted);
+        eq(uncertainReadback.grantedCount(), 1); eq(uncertainReadback.failedCount(), 0);
+        eq(uncertainReadback.pendingCount(), 2); yes(uncertainReadback.snapshot == null);
+        eq(mutations(failedReadback), 2);
+        Device recoveredReadback = new Device(); recoveredReadback.rejectedCameraReads = 1;
+        AdbBatchGrant.Result recovered = recoveredReadback.run(
+                Arrays.asList(CAMERA, OVERLAY), new AtomicBoolean(), new ArrayList<>());
+        yes(!recovered.interrupted); eq(recovered.grantedCount(), 2);
+        eq(recovered.failedCount(), 0); eq(mutations(recoveredReadback), 2);
         Device between = new Device(); AtomicBoolean stop = new AtomicBoolean();
         AdbBatchGrant.Result cancellation = AdbBatchGrant.run(new AdbOperations(between), PKG,
                 Arrays.asList(CAMERA, OVERLAY), stop::get, progress -> {

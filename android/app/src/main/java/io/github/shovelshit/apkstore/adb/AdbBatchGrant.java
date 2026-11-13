@@ -86,9 +86,21 @@ public final class AdbBatchGrant {
                     try {
                         snapshot = operations.setPermission(packageName, entry.permission, true);
                         entries.set(i, new Entry(entry.permission, Outcome.GRANTED, "回读确认已授权"));
-                    } catch (AdbOperations.CommandFailure | AdbOperations.VerificationFailure local) {
-                        entries.set(i, new Entry(entry.permission, Outcome.FAILED, local.getMessage()));
+                    } catch (AdbOperations.MutationRefusal refusal) {
+                        entries.set(i, new Entry(entry.permission, Outcome.FAILED, refusal.getMessage()));
                         snapshot = operations.readPermissions(packageName);
+                    } catch (IOException uncertain) {
+                        snapshot = operations.readPermissions(packageName);
+                        AdbOperations.Permission actual = snapshot.find(entry.permission);
+                        if (actual != null && actual.state == AdbOperations.State.GRANTED)
+                            entries.set(i, new Entry(entry.permission, Outcome.GRANTED, "回读确认已授权"));
+                        else if (actual != null && actual.state == AdbOperations.State.DENIED)
+                            entries.set(i, new Entry(entry.permission, Outcome.FAILED, uncertain.getMessage()));
+                        else {
+                            interrupted = true;
+                            reason = "目标权限状态仍不可确认：" + uncertain.getMessage();
+                            break;
+                        }
                     }
                 }
                 progress.accept(new Progress(packageName, entries, null));
