@@ -29,5 +29,10 @@ public final class DownloadPolicyTest {
         equal("HTTP 403", DownloadPolicy.statusText(16, 403));
         equal("文件已存在", DownloadPolicy.statusText(16, 1009));
         equal("无法恢复下载", DownloadPolicy.statusText(16, 1008));
+        String first = DownloadPolicy.destination("release-manifest.json");
+        String second = DownloadPolicy.destination("release-manifest.json");
+        check(first.matches("ApkStore/[0-9a-f-]{36}/release-manifest\\.json"), "destination preserves name in private task directory");
+        check(!first.equals(second), "each task gets a new destination");
+        equal("下载中", DownloadPolicy.statusText(2, 0));
     }
 }

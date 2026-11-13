@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.UUID;
 
 final class DownloadPolicy {
     private static final Pattern EXTENDED = Pattern.compile("(?:^|;)\\s*filename\\*\\s*=\\s*(?:\"?UTF-8''([^;\"]+)\"?)", Pattern.CASE_INSENSITIVE);
@@ -66,8 +67,11 @@ final class DownloadPolicy {
     static boolean completedSuccessfully(int status) { return status == 8; }
     static boolean active(int status) { return status == 1 || status == 2 || status == 4; }
 
+    static String destination(String name) { return "ApkStore/" + UUID.randomUUID() + "/" + name; }
+
     static String statusText(int status, int reason) {
         if (status == 1) return "等待中";
+        if (status == 2) return "下载中";
         if (status == 4) {
             if (reason == 1) return "等待网络可用";
             if (reason == 2) return "等待网络连接";

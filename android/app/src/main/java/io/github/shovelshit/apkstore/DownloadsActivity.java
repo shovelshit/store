@@ -31,6 +31,7 @@ public class DownloadsActivity extends Activity {
     private LinearLayout container;
     private TextView empty;
     private long pendingInstall = 0;
+    private ApkArchiveVerifier archiveVerifier;
 
     private final Runnable refresh = new Runnable() {
         @Override
@@ -43,6 +44,7 @@ public class DownloadsActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        archiveVerifier = ApkArchiveVerifier.get(this);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -147,6 +149,7 @@ public class DownloadsActivity extends Activity {
         int percent = -1;
         boolean success = false;
         boolean active = false;
+        ApkArchiveVerifier.Result archive = ApkArchiveVerifier.Result.INVALID;
         String source = item.optString("source");
 
         try (Cursor cursor = manager.query(new DownloadManager.Query().setFilterById(id))) {
@@ -191,6 +194,13 @@ public class DownloadsActivity extends Activity {
             status = "读取状态失败";
         }
 
+        boolean apkCandidate = success && DownloadPolicy.isInstallable(name, mime);
+        if (apkCandidate) {
+            archive = archiveVerifier.result(id, manager.getUriForDownloadedFile(id), this::render);
+            if (archive == ApkArchiveVerifier.Result.VERIFYING) status = "已下载 · 正在验证安装包";
+            else if (archive == ApkArchiveVerifier.Result.INVALID) status = "已下载 · 不是有效安装包";
+        }
+
         TextView nameView = new TextView(this);
         nameView.setText(name);
         nameView.setTextSize(14);
@@ -232,7 +242,7 @@ public class DownloadsActivity extends Activity {
         actions.setGravity(Gravity.END);
         actions.setPadding(0, dp(8), 0, 0);
 
-        if (success && DownloadPolicy.isInstallable(name, mime)) {
+        if (apkCandidate && archive == ApkArchiveVerifier.Result.VALID) {
             actions.addView(action("安装", "#2563EB", Color.WHITE, () -> install(id)));
             actions.addView(action("ADB 安装", "#087F74", Color.WHITE, () -> {
                 Intent intent = new Intent(this, AdbActivity.class);
@@ -240,7 +250,7 @@ public class DownloadsActivity extends Activity {
                 startActivity(intent);
             }));
         }
-        if (success && !DownloadPolicy.isInstallable(name, mime)) {
+        if (success && (!apkCandidate || archive == ApkArchiveVerifier.Result.INVALID)) {
             String fileType = mime;
             actions.addView(action("打开", "#2563EB", Color.WHITE, () -> openFile(id, fileType)));
         }
@@ -248,12 +258,14 @@ public class DownloadsActivity extends Activity {
             actions.addView(action("取消", "#F1F5F9", Color.parseColor("#0F172A"), () -> {
                 manager.remove(id);
                 DownloadStore.remove(this, id);
+                archiveVerifier.forget(id);
                 render();
             }));
         }
         actions.addView(action("删除", "#F1F5F9", Color.parseColor("#0F172A"), () -> {
             manager.remove(id);
             DownloadStore.remove(this, id);
+            archiveVerifier.forget(id);
             toast("已删除");
             render();
         }));
@@ -292,6 +304,7 @@ public class DownloadsActivity extends Activity {
             startActivity(intent);
         } catch (Exception error) { toast("无法打开文件：" + error.getMessage()); }
     }
+
 
     /** 安装：没有「未知来源」权限时先去系统设置授权，返回后自动继续 */
     private void install(long id) {

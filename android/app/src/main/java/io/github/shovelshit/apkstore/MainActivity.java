@@ -34,9 +34,6 @@ import android.widget.Toast;
 
 import org.json.JSONArray;
 
-import java.io.File;
-import java.util.HashSet;
-import java.util.Set;
 
 public class MainActivity extends Activity {
     private static final String HOME_URL = "https://store.ltools.asia/";
@@ -245,7 +242,6 @@ public class MainActivity extends Activity {
             String fileName = DownloadPolicy.fileName(url, contentDisposition, mimeType);
             DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
             JSONArray items = DownloadStore.read(this);
-            Set<String> reserved = new HashSet<>();
             for (int i = 0; i < items.length(); i++) {
                 if (items.optJSONObject(i) == null) continue;
                 long previous = items.optJSONObject(i).optLong("id");
@@ -256,18 +252,8 @@ public class MainActivity extends Activity {
                             Toast.makeText(this, "已有相同下载任务，请在「下载」查看", Toast.LENGTH_SHORT).show();
                             return;
                         }
-                        reserved.add(items.optJSONObject(i).optString("name"));
                     }
                 }
-            }
-            File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-            String original = fileName;
-            int dot = original.lastIndexOf('.');
-            String base = dot > 0 ? original.substring(0, dot) : original;
-            String extension = dot > 0 ? original.substring(dot) : "";
-            int suffix = 1;
-            while (new File(downloads, fileName).exists() || reserved.contains(fileName)) {
-                fileName = base + " (" + suffix++ + ")" + extension;
             }
             DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
             Uri target = Uri.parse(url);
@@ -283,7 +269,8 @@ public class MainActivity extends Activity {
             request.setTitle(fileName);
             request.setDescription("正在下载文件");
             request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,
+                    DownloadPolicy.destination(fileName));
 
             long id = manager.enqueue(request);
             DownloadStore.add(this, id, fileName, type, url);
@@ -396,7 +383,7 @@ public class MainActivity extends Activity {
                     String receivedType = cursor.getString(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_MEDIA_TYPE));
                     if (receivedType != null && !receivedType.isEmpty()) mime = receivedType;
                     String message = DownloadPolicy.completedSuccessfully(status)
-                            ? (DownloadPolicy.isInstallable(name, mime) ? "下载完成，可在「下载」里安装" : "文件下载完成，可在「下载」查看")
+                            ? "文件下载完成，可在「下载」查看"
                             : "下载未完成：" + DownloadPolicy.statusText(status, reason);
                     Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
                 }
