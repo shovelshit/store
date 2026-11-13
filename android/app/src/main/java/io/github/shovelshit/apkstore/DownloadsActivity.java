@@ -122,11 +122,14 @@ public class DownloadsActivity extends Activity {
         for (int i = 0; i < items.length(); i += 1) {
             JSONObject item = items.optJSONObject(i);
             if (item == null) continue;
-            container.addView(buildRow(manager, item.optLong("id"), item.optString("name")));
+            container.addView(buildRow(manager, item));
         }
     }
 
-    private View buildRow(DownloadManager manager, long id, String fallbackName) {
+    private View buildRow(DownloadManager manager, JSONObject item) {
+        long id = item.optLong("id");
+        String fallbackName = item.optString("name");
+        String mime = item.optString("mime");
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
         GradientDrawable background = new GradientDrawable();
@@ -144,12 +147,16 @@ public class DownloadsActivity extends Activity {
         int percent = -1;
         boolean success = false;
         boolean active = false;
+        String source = item.optString("source");
 
         try (Cursor cursor = manager.query(new DownloadManager.Query().setFilterById(id))) {
             if (cursor != null && cursor.moveToFirst()) {
                 String title = cursor.getString(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TITLE));
                 if (title != null && !title.isEmpty()) name = title;
                 int state = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                int reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON));
+                String receivedType = cursor.getString(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_MEDIA_TYPE));
+                if (receivedType != null && !receivedType.isEmpty()) mime = receivedType;
                 long done = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
                 long total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
                 switch (state) {
@@ -171,10 +178,10 @@ public class DownloadsActivity extends Activity {
                         break;
                     case DownloadManager.STATUS_PAUSED:
                         active = true;
-                        status = "已暂停";
+                        status = DownloadPolicy.statusText(state, reason);
                         break;
                     case DownloadManager.STATUS_FAILED:
-                        status = "下载失败";
+                        status = "下载失败 · " + DownloadPolicy.statusText(state, reason);
                         break;
                     default:
                         break;
@@ -200,6 +207,17 @@ public class DownloadsActivity extends Activity {
         statusView.setPadding(0, dp(4), 0, 0);
         row.addView(statusView);
 
+        if (!source.isEmpty()) {
+            TextView origin = new TextView(this);
+            Uri originUri = Uri.parse(source);
+            origin.setText("来源 " + (originUri.getHost() == null ? source : originUri.getHost())
+                    + (source.contains("/store/api/github/asset?") ? " · GitHub 附件" : ""));
+            origin.setTextSize(11);
+            origin.setTextColor(Color.parseColor("#64748B"));
+            origin.setSingleLine(true);
+            row.addView(origin);
+        }
+
         if (active) {
             ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
             bar.setMax(100);
@@ -214,13 +232,17 @@ public class DownloadsActivity extends Activity {
         actions.setGravity(Gravity.END);
         actions.setPadding(0, dp(8), 0, 0);
 
-        if (success) {
+        if (success && DownloadPolicy.isInstallable(name, mime)) {
             actions.addView(action("安装", "#2563EB", Color.WHITE, () -> install(id)));
             actions.addView(action("ADB 安装", "#087F74", Color.WHITE, () -> {
                 Intent intent = new Intent(this, AdbActivity.class);
                 intent.putExtra(AdbActivity.EXTRA_DOWNLOAD_ID, id);
                 startActivity(intent);
             }));
+        }
+        if (success && !DownloadPolicy.isInstallable(name, mime)) {
+            String fileType = mime;
+            actions.addView(action("打开", "#2563EB", Color.WHITE, () -> openFile(id, fileType)));
         }
         if (active) {
             actions.addView(action("取消", "#F1F5F9", Color.parseColor("#0F172A"), () -> {
@@ -258,6 +280,17 @@ public class DownloadsActivity extends Activity {
         button.setLayoutParams(params);
         button.setOnClickListener(view -> onClick.run());
         return button;
+    }
+
+    private void openFile(long id, String mime) {
+        Uri uri = ((DownloadManager) getSystemService(DOWNLOAD_SERVICE)).getUriForDownloadedFile(id);
+        if (uri == null) { toast("文件不存在或已被删除"); return; }
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(uri, mime.isEmpty() ? "*/*" : mime);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(intent);
+        } catch (Exception error) { toast("无法打开文件：" + error.getMessage()); }
     }
 
     /** 安装：没有「未知来源」权限时先去系统设置授权，返回后自动继续 */

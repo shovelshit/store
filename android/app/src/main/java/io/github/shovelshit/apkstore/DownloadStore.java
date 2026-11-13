@@ -16,11 +16,17 @@ final class DownloadStore {
     }
 
     static synchronized void add(Context context, long id, String name) {
+        add(context, id, name, "", "");
+    }
+
+    static synchronized void add(Context context, long id, String name, String mime, String source) {
         JSONArray array = read(context);
         try {
             JSONObject item = new JSONObject();
             item.put("id", id);
             item.put("name", name);
+            item.put("mime", mime);
+            item.put("source", source);
             item.put("time", System.currentTimeMillis());
             array.put(item);
         } catch (JSONException ignored) {

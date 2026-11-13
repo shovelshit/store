@@ -22,7 +22,6 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
-import android.webkit.URLUtil;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -35,6 +34,10 @@ import android.widget.Toast;
 
 import org.json.JSONArray;
 
+import java.io.File;
+import java.util.HashSet;
+import java.util.Set;
+
 public class MainActivity extends Activity {
     private static final String HOME_URL = "https://store.ltools.asia/";
     private static final int REQUEST_STORAGE = 1001;
@@ -46,6 +49,7 @@ public class MainActivity extends Activity {
     private TextView downloadLabel;
     private String pendingUrl;
     private String pendingDisposition;
+    private String pendingMime;
 
     private final Handler ticker = new Handler(Looper.getMainLooper());
     private BroadcastReceiver downloadReceiver;
@@ -189,7 +193,7 @@ public class MainActivity extends Activity {
             @Override
             public void onDownloadStart(String url, String userAgent, String contentDisposition,
                                         String mimeType, long contentLength) {
-                startDownload(url, contentDisposition);
+                startDownload(url, contentDisposition, mimeType);
             }
         });
 
@@ -208,7 +212,7 @@ public class MainActivity extends Activity {
 
         // 安装包直链交给 DownloadManager，避免 WebView 展示二进制
         if (path.endsWith(".apk")) {
-            startDownload(url, null);
+            startDownload(url, null, "application/vnd.android.package-archive");
             return true;
         }
         if (scheme.equals("http") || scheme.equals("https")) {
@@ -222,40 +226,68 @@ public class MainActivity extends Activity {
         return true;
     }
 
-    private void startDownload(String url, String contentDisposition) {
+    private void startDownload(String url, String contentDisposition, String mimeType) {
         // Android 9 及以下写公共下载目录需要存储权限
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
                 && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 != PackageManager.PERMISSION_GRANTED) {
             pendingUrl = url;
             pendingDisposition = contentDisposition;
+            pendingMime = mimeType;
             requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_STORAGE);
             return;
         }
-        enqueueDownload(url, contentDisposition);
+        enqueueDownload(url, contentDisposition, mimeType);
     }
 
-    private void enqueueDownload(String url, String contentDisposition) {
+    private void enqueueDownload(String url, String contentDisposition, String mimeType) {
         try {
-            String fileName = URLUtil.guessFileName(url, contentDisposition,
-                    "application/vnd.android.package-archive");
+            String fileName = DownloadPolicy.fileName(url, contentDisposition, mimeType);
+            DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+            JSONArray items = DownloadStore.read(this);
+            Set<String> reserved = new HashSet<>();
+            for (int i = 0; i < items.length(); i++) {
+                if (items.optJSONObject(i) == null) continue;
+                long previous = items.optJSONObject(i).optLong("id");
+                try (Cursor cursor = manager.query(new DownloadManager.Query().setFilterById(previous))) {
+                    if (cursor != null && cursor.moveToFirst() && DownloadPolicy.active(cursor.getInt(
+                            cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)))) {
+                        if (url.equals(items.optJSONObject(i).optString("source"))) {
+                            Toast.makeText(this, "已有相同下载任务，请在「下载」查看", Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+                        reserved.add(items.optJSONObject(i).optString("name"));
+                    }
+                }
+            }
+            File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            String original = fileName;
+            int dot = original.lastIndexOf('.');
+            String base = dot > 0 ? original.substring(0, dot) : original;
+            String extension = dot > 0 ? original.substring(dot) : "";
+            int suffix = 1;
+            while (new File(downloads, fileName).exists() || reserved.contains(fileName)) {
+                fileName = base + " (" + suffix++ + ")" + extension;
+            }
             DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
             Uri target = Uri.parse(url);
             Uri home = Uri.parse(HOME_URL);
-            if (home.getHost().equalsIgnoreCase(target.getHost()) && "https".equalsIgnoreCase(target.getScheme())) {
+            if (home.getHost().equalsIgnoreCase(target.getHost())
+                    && home.getScheme().equalsIgnoreCase(target.getScheme())
+                    && home.getPort() == target.getPort()) {
                 String cookie = CookieManager.getInstance().getCookie(url);
                 if (cookie != null && !cookie.isEmpty()) request.addRequestHeader("Cookie", cookie);
             }
-            request.setMimeType("application/vnd.android.package-archive");
+            String type = DownloadPolicy.normalizedMime(mimeType);
+            if (!type.isEmpty()) request.setMimeType(type);
             request.setTitle(fileName);
-            request.setDescription("正在下载安装包");
+            request.setDescription("正在下载文件");
             request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
 
-            DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
             long id = manager.enqueue(request);
-            DownloadStore.add(this, id, fileName);
-            Toast.makeText(this, "已开始下载，可在「下载」里查看进度", Toast.LENGTH_SHORT).show();
+            DownloadStore.add(this, id, fileName, type, url);
+            Toast.makeText(this, "已加入下载队列，请在「下载」查看状态", Toast.LENGTH_SHORT).show();
         } catch (Exception error) {
             Toast.makeText(this, "下载失败：" + error.getMessage(), Toast.LENGTH_LONG).show();
         }
@@ -269,12 +301,14 @@ public class MainActivity extends Activity {
                 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
         String url = pendingUrl;
         String disposition = pendingDisposition;
+        String mime = pendingMime;
         pendingUrl = null;
         pendingDisposition = null;
+        pendingMime = null;
         if (granted && url != null) {
-            enqueueDownload(url, disposition);
+            enqueueDownload(url, disposition, mime);
         } else {
-            Toast.makeText(this, "没有存储权限，无法保存安装包", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "没有存储权限，无法保存文件", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -340,7 +374,32 @@ public class MainActivity extends Activity {
             public void onReceive(Context context, Intent intent) {
                 updateDownloadBar();
                 long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
-                if (id > 0) Toast.makeText(MainActivity.this, "下载完成，可在「下载」里安装", Toast.LENGTH_SHORT).show();
+                if (id <= 0) return;
+                JSONArray records = DownloadStore.read(MainActivity.this);
+                boolean owned = false;
+                String name = "";
+                String mime = "";
+                for (int i = 0; i < records.length(); i++) {
+                    if (records.optJSONObject(i) != null && records.optJSONObject(i).optLong("id") == id) {
+                        owned = true;
+                        name = records.optJSONObject(i).optString("name");
+                        mime = records.optJSONObject(i).optString("mime");
+                        break;
+                    }
+                }
+                if (!owned) return;
+                DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+                try (Cursor cursor = manager.query(new DownloadManager.Query().setFilterById(id))) {
+                    if (cursor == null || !cursor.moveToFirst()) return;
+                    int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                    int reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON));
+                    String receivedType = cursor.getString(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_MEDIA_TYPE));
+                    if (receivedType != null && !receivedType.isEmpty()) mime = receivedType;
+                    String message = DownloadPolicy.completedSuccessfully(status)
+                            ? (DownloadPolicy.isInstallable(name, mime) ? "下载完成，可在「下载」里安装" : "文件下载完成，可在「下载」查看")
+                            : "下载未完成：" + DownloadPolicy.statusText(status, reason);
+                    Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+                }
             }
         };
         IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
