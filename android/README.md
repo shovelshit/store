@@ -6,14 +6,14 @@
 ## 产物
 
 ```
-android/dist/apk-store-1.3.0.apk
-android/dist/apk-store-1.3.0.apk.sha256
+android/dist/apk-store-1.4.0.apk
+android/dist/apk-store-1.4.0.apk.sha256
 ```
 
 - 包名 `io.github.shovelshit.apkstore`
 - minSdk 24（Android 7.0），targetSdk 34
 - 启动图标：`res/mipmap-xxxhdpi/ic_launcher.png`（蓝色渐变 + 下载箭头 + APK 字样）
-- 当前版本 1.3.0（versionCode 5）；APK 文件名从 Manifest 读取
+- 当前版本 1.4.0（versionCode 6）；APK 文件名从 Manifest 读取
 - 原有签名优先；没有原签名时仅可显式生成开发签名，**不能保证覆盖安装旧版**
 
 ## 构建
@@ -39,6 +39,34 @@ node --test pages/store/*.test.cjs
 缺少原密钥时构建会失败，除非使用 `--dev-signing`；该选项将独立密钥保存在忽略的
 `android/.keystore/development.keystore`，后续需再次显式指定 `--dev-signing` 以复用。
 妥善备份该密钥；不可将 APK 或私钥提交到 Git。
+
+### 更新发布顺序
+
+首次安装需手动侧载 APK；之后 App 启动和返回前台时会自动检查
+`https://store.ltools.asia/android/update.json`，也可在应用更新页手动检查。
+索引只对 `development` 渠道开放，必须与已安装版本使用相同签名证书。
+先用保留的开发密钥构建并校验 APK，再创建 `android-v1.4.0-dev` 预发布并上传
+`apk-store-1.4.0.apk` 和 `.apk.sha256`。独立下载发布资产核对哈希及签名后，运行：
+
+```sh
+node android/scripts/prepare-update.mjs \
+  --apk android/dist/apk-store-1.4.0.apk \
+  --manifest android/app/src/main/AndroidManifest.xml \
+  --sdk /path/to/Android/sdk \
+  --url https://github.com/OWNER/REPO/releases/download/android-v1.4.0-dev/apk-store-1.4.0.apk \
+  --channel development --notes /path/to/release-notes.txt \
+  --output pages/store/android/update.json
+```
+
+使用真实公开 HTTPS 发布地址替换示例 URL。脚本从 SDK `aapt2` 和 `apksigner` 读取
+APK 包名、版本、最低 SDK 与证书，独立下载指定资产比对大小和 SHA-256；任一步失败
+都不会替换已有索引。只在发布资产实际可访问且通过核对后提交索引，再更新父仓库
+Store gitlink 并部署。索引发布后还需检查公开 URL 可免登录返回 JSON，且内容与远端 APK 一致。
+发布前不要放置占位索引；父仓库静态资产构建可在索引不存在时正常运行。
+
+下载或检查更新遇到断网、HTTP 错误、校验失败、签名不符、存储空间不足时不会安装
+不可信 APK；检查网络与发布资产后重试。若系统阻止安装，需授予本应用“安装未知应用”
+权限；不同签名的旧安装不能直接覆盖。
 
 ### 为什么要有临时目录
 
